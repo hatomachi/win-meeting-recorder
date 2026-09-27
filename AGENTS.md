@@ -18,15 +18,22 @@
 - **完了済みフェーズ**:
   - **Phase 0 (基盤 & CI)**: .NET 8 プロジェクト定義、GitHub Actions による単一exe自動ビルド & GitHub Releases（ログイン不要DL）自動公開パイプライン整備完了。
   - **Phase 1 (音声 & Web UI)**: NAudio WASAPI Loopback ＋ マイク音声合成エンジン、実時間追従ドレインによる秒数精度同期、内蔵Web UI（`IndexHtml.cs`）を実装し、**手元Windows検証機にて音割れなし・10秒ピッタリ録音・localhost:5000表示の正常動作を確認完了**。
-- **次に着手するタスク（Phase 2）**:
-  - **Phase 2: 画面キャプチャ＆変化検知エンジンの実装**
-    - `System.Drawing.Common` (GDI+) の `Graphics.CopyFromScreen` による指定ディスプレイのBitBltキャプチャ
-    - 縮小グレースケール差分判定アルゴリズム（スライド等の変化検知）
-    - アニメーション等の過剰連写を防ぐデバウンス＆クールダウン（例: 最小間隔2秒、安定後0.5秒）
+  - **Phase 2 (画面キャプチャ＆変化検知エンジン)**:
+    - GDI+ `Graphics.CopyFromScreen` による指定ディスプレイのBitBltキャプチャ (`ScreenService.cs`)
+    - Win32 API (`EnumDisplayMonitors`, `GetMonitorInfoW`, `GetSystemMetrics`) による個別モニタ・プライマリ・仮想デスクトップ全体の安全列挙
+    - 低解像度グレースケール差分判定アルゴリズム (`ScreenDiffDetector.cs`、128x72バイリニア縮小＋ITU-R BT.601)
+    - デバウンス＆クールダウン（最小間隔2秒、スライドめくりアニメーション安定待ち500ms、定期キーフレーム60秒）
     - フル解像度JPEG圧縮保存（品質80%）
-    - CLI検証モード（`--test-screen [秒数]`）の追加
-- **ユーザーから「続きをやって」と指示された場合**:
-  - 直ちに上記の **Phase 2（画面キャプチャ＆変化検知エンジン）** の実装に着手してください。
+    - CLI検証モード（`--list-screens`, `--test-screen [秒数] [モニタIndex] [出力先]`）の追加
+    - Web UI 連携（モニタ選択、リアルタイム撮影枚数カウンター、手動即時スクショボタン、音声＋画面同時記録）
+- **次に着手するタスク**:
+  - 手元Windows検証機での実機動作確認:
+    - `WinMeetingRecorder.exe --list-screens` でディスプレイ列挙の確認
+    - `WinMeetingRecorder.exe --test-screen 15` でスライド切り替え変化検知・JPEG保存の確認
+    - `http://localhost:5000` で音声＋画面の同時記録テスト
+  - **Phase 4: 社内GitLab REST API 連携 ＆ 自動クリーンアップ**:
+    - 会議終了後の GitLab Commits API 一括送信（`meeting_audio.wav` / `images/*.jpg` / `README.md`）
+    - 送信成功後のローカル一時スプール自動削除
 
 ---
 
