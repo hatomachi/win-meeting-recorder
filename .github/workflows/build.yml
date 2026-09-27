@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Self-Contained Win-x64 Exe
@@ -35,6 +38,11 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -o ./publish
 
+      - name: Zip Executable
+        shell: pwsh
+        run: |
+          Compress-Archive -Path ./publish/WinMeetingRecorder.exe -DestinationPath ./publish/WinMeetingRecorder-win-x64.zip -Force
+
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -42,3 +50,18 @@ jobs:
           path: ./publish/WinMeetingRecorder.exe
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish GitHub Release (Login-free Download)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vlatest
+          name: "WinMeetingRecorder Latest Build"
+          body: |
+            ## 🎙️ WinMeetingRecorder 最新ビルド (Self-contained win-x64)
+            - **ダウンロード**: 下記のアセット `WinMeetingRecorder-win-x64.zip` をクリックしてダウンロード（GitHubログイン不要）
+            - **内容物**: `WinMeetingRecorder.exe` (解凍してダブルクリックまたはPowerShellから実行)
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: ./publish/WinMeetingRecorder-win-x64.zip
