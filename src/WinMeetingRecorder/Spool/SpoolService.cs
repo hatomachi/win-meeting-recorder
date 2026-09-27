@@ -104,6 +104,9 @@ public class SpoolService
             var transcriptPath = Path.Combine(metadata.SpoolDirectory, metadata.TranscriptFileName ?? "transcript.json");
             metadata.HasTranscript = File.Exists(transcriptPath);
 
+            var minutesPath = Path.Combine(metadata.SpoolDirectory, metadata.MinutesFileName ?? "MINUTES.md");
+            metadata.HasMinutes = File.Exists(minutesPath);
+
             SaveMetadata(metadata);
             return metadata;
         }
@@ -124,6 +127,9 @@ public class SpoolService
 
             var transcriptPath = Path.Combine(metadata.SpoolDirectory, metadata.TranscriptFileName ?? "transcript.json");
             metadata.HasTranscript = File.Exists(transcriptPath);
+
+            var minutesPath = Path.Combine(metadata.SpoolDirectory, metadata.MinutesFileName ?? "MINUTES.md");
+            metadata.HasMinutes = File.Exists(minutesPath);
 
             SaveMetadata(metadata);
         }
@@ -153,6 +159,7 @@ public class SpoolService
                     meta.SpoolDirectory = sessionDir;
                     meta.HasMp3 = File.Exists(Path.Combine(sessionDir, meta.Mp3FileName ?? "meeting_audio.mp3"));
                     meta.HasTranscript = File.Exists(Path.Combine(sessionDir, meta.TranscriptFileName ?? "transcript.json"));
+                    meta.HasMinutes = File.Exists(Path.Combine(sessionDir, meta.MinutesFileName ?? "MINUTES.md"));
                     return meta;
                 }
             }
@@ -181,6 +188,9 @@ public class SpoolService
 
         var transcriptFile = Path.Combine(sessionDir, "transcript.json");
         recovered.HasTranscript = File.Exists(transcriptFile);
+
+        var minutesFile = Path.Combine(sessionDir, "MINUTES.md");
+        recovered.HasMinutes = File.Exists(minutesFile);
 
         var imagesDir = Path.Combine(sessionDir, "images");
         if (Directory.Exists(imagesDir))
@@ -238,6 +248,8 @@ public class SpoolService
                 HasAudio = meta?.HasAudio ?? File.Exists(Path.Combine(subDir, "meeting_audio.wav")),
                 HasMp3 = meta?.HasMp3 ?? File.Exists(Path.Combine(subDir, "meeting_audio.mp3")),
                 HasTranscript = meta?.HasTranscript ?? File.Exists(Path.Combine(subDir, "transcript.json")),
+                HasMinutes = meta?.HasMinutes ?? File.Exists(Path.Combine(subDir, "MINUTES.md")),
+                Pipeline = meta?.Pipeline ?? new PipelineStatus(),
                 TotalSizeBytes = totalBytes
             });
         }

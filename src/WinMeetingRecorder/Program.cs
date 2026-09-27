@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using NAudio.Wave;
+using WinMeetingRecorder.Ai;
 using WinMeetingRecorder.Audio;
 using WinMeetingRecorder.Config;
 using WinMeetingRecorder.GitLab;
@@ -14,6 +15,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // DI コンテナ登録
 builder.Services.AddSingleton<ConfigService>();
+builder.Services.AddSingleton<PromptService>();
+builder.Services.AddSingleton<AiService>();
 builder.Services.AddSingleton<SpoolService>();
 builder.Services.AddSingleton<GitLabService>();
 builder.Services.AddSingleton<WhisperService>();
@@ -377,6 +380,37 @@ if (nonFlagArgs.Length > 0)
         return;
     }
 
+    if (command == "--test-ai")
+    {
+        var configService = new ConfigService();
+        var promptService = new PromptService();
+        var aiService = new AiService(promptService);
+        var config = configService.LoadConfig().Ai;
+        if (nonFlagArgs.Length > 1) config.Engine = nonFlagArgs[1];
+
+        Console.WriteLine("========================================");
+        Console.WriteLine(" 🤖 AI CLI 接続テスト (Phase 7A)");
+        Console.WriteLine("========================================");
+        Console.WriteLine($"Engine:     {config.Engine}");
+        Console.WriteLine($"Model:      {(string.IsNullOrEmpty(config.Model) ? "(既定)" : config.Model)}");
+        Console.WriteLine($"PromptFile: {promptService.ActivePromptFilePath}");
+        Console.WriteLine("----------------------------------------");
+
+        var status = aiService.CheckStatusAsync(config).GetAwaiter().GetResult();
+        if (status.Available)
+        {
+            Console.WriteLine($"✅ {config.Engine} CLI 利用可能！");
+            Console.WriteLine($"   パス:       {status.CommandPath}");
+            Console.WriteLine($"   バージョン: {status.Version}");
+        }
+        else
+        {
+            Console.WriteLine($"❌ {config.Engine} CLI 利用不可: {status.Error}");
+        }
+        Console.WriteLine("========================================");
+        return;
+    }
+
     if (command == "--help" || command == "-h")
     {
         Console.WriteLine("========================================");
@@ -391,6 +425,7 @@ if (nonFlagArgs.Length > 0)
         Console.WriteLine("  --test-screen, -ts [秒数] [モニタIndex] [出力先] : 画面変化検知スクショテスト");
         Console.WriteLine("  --test-gitlab [URL] [Project] [PAT] : GitLab REST API 接続テスト");
         Console.WriteLine("  --test-whisper [BaseUrl] [Audio] [Key] : Whisper API 文字起こしテスト");
+        Console.WriteLine("  --test-ai [Engine(copilot/claude)] : AI CLI 接続テスト");
         Console.WriteLine("  --pending-spool                : ローカルスプールに残っている未送信一覧");
         Console.WriteLine("  --no-browser, -nb              : 起動時に既定ブラウザを自動で開かない");
         Console.WriteLine("  --help, -h                     : このヘルプを表示");
@@ -506,6 +541,260 @@ app.MapPost("/api/whisper/transcribe", async (
     }
 
     return Results.Ok(result);
+});
+
+// API: AI CLI 接続テスト
+app.MapPost("/api/ai/test", async (AiService aiService, AiConfig config) =>
+{
+    var result = await aiService.CheckStatusAsync(config);
+    return Results.Ok(result);
+});
+
+// API: 議事録プロンプト取得
+app.MapGet("/api/ai/prompt", (PromptService promptService) =>
+{
+    return Results.Ok(new
+    {
+        prompt = promptService.LoadPrompt(),
+        filePath = promptService.ActivePromptFilePath
+    });
+});
+
+// API: 議事録プロンプト保存
+app.MapPost("/api/ai/prompt", (PromptService promptService, PromptSaveRequest req) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Prompt))
+    {
+        return Results.BadRequest(new { error = "プロンプト内容が空です。" });
+    }
+    promptService.SavePrompt(req.Prompt);
+    return Results.Ok(new { message = "プロンプトを保存しました。", filePath = promptService.ActivePromptFilePath });
+});
+
+// API: 指定セッションの議事録手動生成
+app.MapPost("/api/ai/minutes", async (
+    SessionMinutesRequest req,
+    SpoolService spool,
+    AiService aiService,
+    ConfigService configService) =>
+{
+    if (string.IsNullOrWhiteSpace(req.SessionId))
+    {
+        return Results.BadRequest(new { error = "セッションIDが指定されていません。" });
+    }
+
+    var sessionDir = Path.Combine(spool.SpoolBaseDir, req.SessionId);
+    if (!Directory.Exists(sessionDir))
+    {
+        return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {req.SessionId}" });
+    }
+
+    var metadata = spool.GetSessionMetadata(sessionDir);
+    if (metadata == null)
+    {
+        return Results.NotFound(new { error = "メタデータが見つかりません。" });
+    }
+
+    var config = configService.LoadConfig().Ai;
+    var result = await aiService.GenerateMinutesAsync(metadata, config);
+    if (result.Success)
+    {
+        spool.UpdateMetadata(metadata);
+    }
+
+    return Results.Ok(result);
+});
+
+// API: 議事録チャット修正依頼 (--resume)
+app.MapPost("/api/ai/chat", async (
+    AiChatRequest req,
+    SpoolService spool,
+    AiService aiService,
+    ConfigService configService) =>
+{
+    if (string.IsNullOrWhiteSpace(req.SessionId))
+    {
+        return Results.BadRequest(new { error = "セッションIDが指定されていません。" });
+    }
+    if (string.IsNullOrWhiteSpace(req.Message))
+    {
+        return Results.BadRequest(new { error = "修正依頼メッセージが空です。" });
+    }
+
+    var sessionDir = Path.Combine(spool.SpoolBaseDir, req.SessionId);
+    if (!Directory.Exists(sessionDir))
+    {
+        return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {req.SessionId}" });
+    }
+
+    var metadata = spool.GetSessionMetadata(sessionDir);
+    if (metadata == null)
+    {
+        return Results.NotFound(new { error = "メタデータが見つかりません。" });
+    }
+
+    var config = configService.LoadConfig().Ai;
+    var result = await aiService.ChatReviseAsync(metadata, req.Message, config);
+    if (result.Success)
+    {
+        spool.UpdateMetadata(metadata);
+    }
+
+    return Results.Ok(result);
+});
+
+// API: 議事録 Markdown テキスト取得
+app.MapGet("/api/spool/{sessionId}/minutes", (string sessionId, SpoolService spool) =>
+{
+    var sessionDir = Path.Combine(spool.SpoolBaseDir, sessionId);
+    var minutesPath = Path.Combine(sessionDir, "MINUTES.md");
+    if (!File.Exists(minutesPath))
+    {
+        return Results.NotFound(new { error = "議事録が存在しません。" });
+    }
+
+    var content = File.ReadAllText(minutesPath);
+    return Results.Content(content, "text/plain; charset=utf-8");
+});
+
+// API: パイプラインステップ単独実行/再開
+app.MapPost("/api/pipeline/run-step", async (
+    PipelineStepRequest req,
+    SpoolService spool,
+    WhisperService whisperService,
+    AiService aiService,
+    GitLabService gitLabService,
+    ConfigService configService) =>
+{
+    if (string.IsNullOrWhiteSpace(req.SessionId))
+    {
+        return Results.BadRequest(new { error = "セッションIDが指定されていません。" });
+    }
+
+    var sessionDir = Path.Combine(spool.SpoolBaseDir, req.SessionId);
+    if (!Directory.Exists(sessionDir))
+    {
+        return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {req.SessionId}" });
+    }
+
+    var metadata = spool.GetSessionMetadata(sessionDir);
+    if (metadata == null)
+    {
+        return Results.NotFound(new { error = "メタデータが見つかりません。" });
+    }
+
+    var appConfig = configService.LoadConfig();
+
+    if (req.Step == "transcribe")
+    {
+        metadata.Pipeline.Transcribe = "running";
+        spool.UpdateMetadata(metadata);
+
+        var mp3Path = Path.Combine(sessionDir, "meeting_audio.mp3");
+        var wavPath = Path.Combine(sessionDir, "meeting_audio.wav");
+        string targetAudio = File.Exists(mp3Path) ? mp3Path : wavPath;
+
+        var trResult = await whisperService.TranscribeAudioAsync(targetAudio, appConfig.Whisper);
+        if (trResult.Success)
+        {
+            metadata.Pipeline.Transcribe = "success";
+            spool.UpdateMetadata(metadata);
+
+            if (req.AutoFollow && appConfig.Ai.AutoGenerateMinutes)
+            {
+                metadata.Pipeline.Minutes = "running";
+                spool.UpdateMetadata(metadata);
+                var aiResult = await aiService.GenerateMinutesAsync(metadata, appConfig.Ai, trResult.Response);
+                if (aiResult.Success)
+                {
+                    metadata.Pipeline.Minutes = "success";
+                    spool.UpdateMetadata(metadata);
+
+                    if (appConfig.GitLab.AutoUploadOnStop && appConfig.GitLab.IsConfigured)
+                    {
+                        metadata.Pipeline.Upload = "running";
+                        spool.UpdateMetadata(metadata);
+                        var upResult = await gitLabService.UploadSessionAsync(sessionDir, appConfig.GitLab, metadata, true);
+                        if (!upResult.Success)
+                        {
+                            metadata.Pipeline.Upload = "error";
+                            metadata.Pipeline.ErrorMessage = upResult.Message;
+                            spool.UpdateMetadata(metadata);
+                        }
+                    }
+                }
+                else
+                {
+                    metadata.Pipeline.Minutes = "error";
+                    metadata.Pipeline.ErrorMessage = aiResult.Message;
+                    spool.UpdateMetadata(metadata);
+                }
+            }
+
+            return Results.Ok(new { success = true, step = "transcribe", message = "文字起こしが完了しました。" });
+        }
+        else
+        {
+            metadata.Pipeline.Transcribe = "error";
+            metadata.Pipeline.ErrorMessage = trResult.Message;
+            spool.UpdateMetadata(metadata);
+            return Results.Ok(new { success = false, step = "transcribe", message = trResult.Message });
+        }
+    }
+    else if (req.Step == "minutes")
+    {
+        metadata.Pipeline.Minutes = "running";
+        spool.UpdateMetadata(metadata);
+
+        var aiResult = await aiService.GenerateMinutesAsync(metadata, appConfig.Ai);
+        if (aiResult.Success)
+        {
+            metadata.Pipeline.Minutes = "success";
+            spool.UpdateMetadata(metadata);
+
+            if (req.AutoFollow && appConfig.GitLab.AutoUploadOnStop && appConfig.GitLab.IsConfigured)
+            {
+                metadata.Pipeline.Upload = "running";
+                spool.UpdateMetadata(metadata);
+                var upResult = await gitLabService.UploadSessionAsync(sessionDir, appConfig.GitLab, metadata, true);
+                if (!upResult.Success)
+                {
+                    metadata.Pipeline.Upload = "error";
+                    metadata.Pipeline.ErrorMessage = upResult.Message;
+                    spool.UpdateMetadata(metadata);
+                }
+            }
+
+            return Results.Ok(new { success = true, step = "minutes", message = "議事録を生成しました。", minutes = aiResult.MinutesMarkdown });
+        }
+        else
+        {
+            metadata.Pipeline.Minutes = "error";
+            metadata.Pipeline.ErrorMessage = aiResult.Message;
+            spool.UpdateMetadata(metadata);
+            return Results.Ok(new { success = false, step = "minutes", message = aiResult.Message });
+        }
+    }
+    else if (req.Step == "upload")
+    {
+        metadata.Pipeline.Upload = "running";
+        spool.UpdateMetadata(metadata);
+
+        var upResult = await gitLabService.UploadSessionAsync(sessionDir, appConfig.GitLab, metadata, true);
+        if (upResult.Success)
+        {
+            return Results.Ok(new { success = true, step = "upload", message = "GitLabへアップロードしました。" });
+        }
+        else
+        {
+            metadata.Pipeline.Upload = "error";
+            metadata.Pipeline.ErrorMessage = upResult.Message;
+            spool.UpdateMetadata(metadata);
+            return Results.Ok(new { success = false, step = "upload", message = upResult.Message });
+        }
+    }
+
+    return Results.BadRequest(new { error = $"未知のステップです: {req.Step}" });
 });
 
 // API: デバイス一覧取得
@@ -626,14 +915,14 @@ app.MapPost("/api/record/screenshot", (ScreenCaptureEngine screenEngine) =>
     });
 });
 
-// API: 録音・画面キャプチャ停止 ＆ (任意) GitLab 自動アップロード
-// API: 録音・画面キャプチャ停止 ＆ MP3軽量化 ＆ (任意) Whisper文字起こし ＆ (任意) GitLab 自動アップロード
+// API: 録音・画面キャプチャ停止 ＆ MP3軽量化 ＆ パイプライン自動化 (Whisper文字起こし ＆ AI議事録 ＆ GitLab)
 app.MapPost("/api/record/stop", async (
     AudioEngine audioEngine, 
     ScreenCaptureEngine screenEngine,
     SpoolService spool,
     GitLabService gitLabService,
     WhisperService whisperService,
+    AiService aiService,
     ConfigService configService) =>
 {
     string? stoppingSessionId;
@@ -684,6 +973,12 @@ app.MapPost("/api/record/stop", async (
         if (!string.IsNullOrEmpty(stoppingSessionDir))
         {
             metadata = spool.FinishSession(stoppingSessionDir);
+            if (metadata != null)
+            {
+                metadata.Pipeline.Audio = "success";
+                metadata.Pipeline.LastStep = "audio";
+                spool.UpdateMetadata(metadata);
+            }
         }
 
         var appConfig = configService.LoadConfig();
@@ -692,24 +987,94 @@ app.MapPost("/api/record/stop", async (
         WhisperTranscribeResult? whisperResult = null;
         if (appConfig.Whisper.AutoTranscribeOnStop && appConfig.Whisper.IsConfigured && !string.IsNullOrEmpty(targetAudioPath))
         {
+            if (metadata != null)
+            {
+                metadata.Pipeline.Transcribe = "running";
+                metadata.Pipeline.LastStep = "transcribe";
+                spool.UpdateMetadata(metadata);
+            }
+
             Console.WriteLine($"[Program] 🎙️ 会議終了時 Whisper 自動文字起こし開始: {Path.GetFileName(targetAudioPath)}");
             whisperResult = await whisperService.TranscribeAudioAsync(targetAudioPath, appConfig.Whisper);
             if (whisperResult.Success && metadata != null)
             {
+                metadata.Pipeline.Transcribe = "success";
+                spool.UpdateMetadata(metadata);
+            }
+            else if (metadata != null)
+            {
+                metadata.Pipeline.Transcribe = "error";
+                metadata.Pipeline.ErrorMessage = whisperResult.Message;
                 spool.UpdateMetadata(metadata);
             }
         }
+        else if (metadata != null)
+        {
+            metadata.Pipeline.Transcribe = "skipped";
+            spool.UpdateMetadata(metadata);
+        }
 
-        // 4. GitLab 自動アップロード (設定有効時)
+        // 4. AI 議事録自動作成 (文字起こし成功、または既存transcriptがあり、設定有効時)
+        AiExecutionResult? aiResult = null;
+        if (appConfig.Ai.AutoGenerateMinutes && metadata != null && (metadata.HasTranscript || whisperResult?.Success == true))
+        {
+            metadata.Pipeline.Minutes = "running";
+            metadata.Pipeline.LastStep = "minutes";
+            spool.UpdateMetadata(metadata);
+
+            Console.WriteLine($"[Program] 🤖 会議終了時 AI 議事録自動作成開始 (Engine: {appConfig.Ai.Engine})");
+            aiResult = await aiService.GenerateMinutesAsync(metadata, appConfig.Ai, whisperResult?.Response);
+            if (aiResult.Success)
+            {
+                metadata.Pipeline.Minutes = "success";
+                spool.UpdateMetadata(metadata);
+            }
+            else
+            {
+                metadata.Pipeline.Minutes = "error";
+                metadata.Pipeline.ErrorMessage = aiResult.Message;
+                spool.UpdateMetadata(metadata);
+            }
+        }
+        else if (metadata != null)
+        {
+            metadata.Pipeline.Minutes = "skipped";
+            spool.UpdateMetadata(metadata);
+        }
+
+        // 5. GitLab 自動アップロード (設定有効時)
         GitLabUploadResult? gitLabResult = null;
         if (appConfig.GitLab.AutoUploadOnStop && appConfig.GitLab.IsConfigured && !string.IsNullOrEmpty(stoppingSessionDir))
         {
+            if (metadata != null)
+            {
+                metadata.Pipeline.Upload = "running";
+                metadata.Pipeline.LastStep = "upload";
+                spool.UpdateMetadata(metadata);
+            }
+
             Console.WriteLine($"[Program] 自動アップロード開始: セッション {stoppingSessionId}");
             gitLabResult = await gitLabService.UploadSessionAsync(
                 stoppingSessionDir, 
                 appConfig.GitLab, 
                 metadata, 
                 deleteOnSuccess: true);
+
+            if (gitLabResult.Success && metadata != null)
+            {
+                metadata.Pipeline.Upload = "success";
+            }
+            else if (metadata != null)
+            {
+                metadata.Pipeline.Upload = "error";
+                metadata.Pipeline.ErrorMessage = gitLabResult.Message;
+                spool.UpdateMetadata(metadata);
+            }
+        }
+        else if (metadata != null)
+        {
+            metadata.Pipeline.Upload = "skipped";
+            spool.UpdateMetadata(metadata);
         }
 
         return Results.Ok(new
@@ -720,7 +1085,9 @@ app.MapPost("/api/record/stop", async (
             capturedCount = screenEngine.CapturedCount,
             mp3Conversion = mp3Result,
             whisperTranscription = whisperResult,
-            gitLabUpload = gitLabResult
+            aiMinutes = aiResult,
+            gitLabUpload = gitLabResult,
+            pipeline = metadata?.Pipeline
         });
     }
     catch (Exception ex)
@@ -857,5 +1224,13 @@ public record RecordStartRequest(
 public record SessionUploadRequest(string SessionId);
 
 public record SessionTranscribeRequest(string SessionId);
+
+public record SessionMinutesRequest(string SessionId);
+
+public record AiChatRequest(string SessionId, string Message);
+
+public record PipelineStepRequest(string SessionId, string Step, bool AutoFollow = true);
+
+public record PromptSaveRequest(string Prompt);
 
 public record ActiveSessionState(string SessionId, string SpoolDirectory);

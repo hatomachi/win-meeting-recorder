@@ -113,10 +113,19 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
     - 発話テキストとスクリーンショット画像を秒数順で時系列マージした**統合タイムラインMarkdown**（`README.md`）の自動生成。
     - GitLab Commits API へのアトミック一括コミット（`README.md`, `meeting_audio.mp3`, `transcript.json`, `images/*.jpg`）。
     - Web UIに「🎙️ OpenAI Whisper 文字起こし設定」アコーディオンパネル、接続テスト機能、未送信スプールへの手動文字起こしボタンを追加。
-    - **実機検証完了**: 手元Windows検証機からMac上のWhisperサーバーへ通信し、録音 ➜ MP3圧縮 (96.8%削減) ➜ Whisper文字起こし (4セグメント) ➜ タイムラインREADME生成 ➜ GitLab本物リポジトリへの一括コミット ([コミット閲覧](https://gitlab.com/test7891019/win-meeting-recorder-test/-/commit/32ce1a75dd00e9528ef06cbf103deff29c53749a)) ➜ スプール完全自動消去のエンドツーエンド全フロー完全完遂！
-- **次期実装タスク（Phase 6C: 会議ビューア統合 ＆ 画面プレビューUI）**:
+  - **Phase 7A (AI議事録作成 ＆ 外部プロンプト調整 ＆ チャット修正)**:
+    - `portable-ssh-ftp` 方式（C#内蔵のローカルCLI直接サブプロセス実行）を採用し、単一exeの自己完結性を完全維持。
+    - GitHub Copilot CLI と Claude Code をフラットに選択可能（Engine切り替え）。
+    - exe同階層の外部ファイル `meeting_minutes_prompt.txt`（または `%AppData%`）および Web UI からプロンプトを直接調整可能。
+    - スプールフォルダを作業ディレクトリとして CLI を実行し、Whisper文字起こし（`transcript.json`）とスライド画像（`images/*.jpg`）から `MINUTES.md` を自動生成。
+    - Web UI からチャットで「修正指示」を送信すると、CLI のセッション継続（`--resume <UUID>`）機能により文脈を維持したまま議事録を再生成・即時反映。
+  - **Phase 7B (自動実行パイプライン o-o-o ＆ 途中ステップ再開)**:
+    - 録音停止ボタン1クリックで「[1.録音・MP3化] ➜ [2.Whisper文字起こし] ➜ [3.AI議事録生成] ➜ [4.GitLab一括コミット] ➜ [5.スプール自動消去]」の全自動パイプラインが完走！
+    - Web UI にパイプライン進捗インジケーター（○ - ○ - ○ - ○）を配置し、各ステップの個別リトライ・途中再開に対応。
+    - GitLab 上の `README.md` に「## 🤖 AI 会議議事録」が自動挿入され、`MINUTES.md` も含めたアトミック一括コミット（コミットID `7dd1c772`）に完全成功！
+- **次期実装タスク（Phase 8: 会議ビューア統合 ＆ GitLab上の既存議事録の手元再生成・再プッシュ）**:
   - `voice-reflection-agent` で構築済みのリッチタイムラインビューアとの完全互換連携。
-  - Web UI 上での録音中画面プレビューや文字起こしリアルタイム確認UIの追加。
+  - GitLab 上に他人がアップロード済みの過去会議データを取得し、手元でプロンプト調整やAIチャット修正を行い、GitLabへ再プッシュする機能。
 
 ---
 

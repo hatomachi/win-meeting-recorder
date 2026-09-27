@@ -182,8 +182,30 @@ public class GitLabService
                 catch { /* ignore */ }
             }
 
-            // 1. README.md の生成＆アクション追加
-            var readmeContent = GenerateReadmeMarkdown(sessionId, metadata, basePath, transcriptData);
+            // 1. MINUTES.md の存在確認
+            var minutesPath = Path.Combine(sessionDir, metadata?.MinutesFileName ?? "MINUTES.md");
+            string? minutesContent = null;
+            if (File.Exists(minutesPath))
+            {
+                try
+                {
+                    minutesContent = await File.ReadAllTextAsync(minutesPath, Encoding.UTF8);
+                    var mBytes = Encoding.UTF8.GetBytes(minutesContent);
+                    totalBytes += mBytes.Length;
+                    actions.Add(new
+                    {
+                        action = "create",
+                        file_path = $"{basePath}/MINUTES.md",
+                        content = minutesContent,
+                        encoding = "text"
+                    });
+                    Console.WriteLine($"[GitLabService] 📋 AI議事録 MINUTES.md をコミットに追加: {mBytes.Length} bytes");
+                }
+                catch { /* ignore */ }
+            }
+
+            // 2. README.md の生成＆アクション追加
+            var readmeContent = GenerateReadmeMarkdown(sessionId, metadata, basePath, transcriptData, minutesContent);
             var readmeBytes = Encoding.UTF8.GetBytes(readmeContent);
             totalBytes += readmeBytes.Length;
             actions.Add(new
@@ -194,7 +216,7 @@ public class GitLabService
                 encoding = "text"
             });
 
-            // 2. 音声ファイルの追加 (軽量MP3を最優先、なければWAV)
+            // 3. 音声ファイルの追加 (軽量MP3を最優先、なければWAV)
             var mp3Path = Path.Combine(sessionDir, "meeting_audio.mp3");
             var wavPath = Path.Combine(sessionDir, "meeting_audio.wav");
 
@@ -352,7 +374,8 @@ public class GitLabService
         string sessionId, 
         MeetingSessionMetadata? metadata, 
         string basePath, 
-        WhisperTranscriptionResponse? transcript = null)
+        WhisperTranscriptionResponse? transcript = null,
+        string? minutesMarkdown = null)
     {
         var sb = new StringBuilder();
         var titleTime = metadata != null && metadata.StartTime != default 
@@ -400,7 +423,23 @@ public class GitLabService
         {
             sb.AppendLine($"- **文字起こし**: 完了 ({transcript.Segments.Count} 件の発話セグメント, 全 {transcript.Text.Length} 文字) [transcript.json](./transcript.json)");
         }
+
+        if (!string.IsNullOrWhiteSpace(minutesMarkdown))
+        {
+            sb.AppendLine($"- **AI議事録**: 作成済み [MINUTES.md](./MINUTES.md)");
+        }
         sb.AppendLine();
+
+        // AI 議事録セクション
+        if (!string.IsNullOrWhiteSpace(minutesMarkdown))
+        {
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine("## 🤖 AI 会議議事録");
+            sb.AppendLine();
+            sb.AppendLine(minutesMarkdown.Trim());
+            sb.AppendLine();
+        }
 
         // 文字起こし全文アコーディオン
         if (transcript != null && !string.IsNullOrWhiteSpace(transcript.Text))
