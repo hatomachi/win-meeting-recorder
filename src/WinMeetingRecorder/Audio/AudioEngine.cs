@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -16,7 +17,12 @@ public class AudioEngine : IDisposable
     private BufferedWaveProvider? _micBuffer;
 
     private MixingSampleProvider? _mixer;
+    private SampleToWaveProvider16? _waveProvider16;
     private WaveFileWriter? _waveWriter;
+
+    private Stopwatch? _stopwatch;
+    private long _totalBytesWritten;
+    private int _bytesPerSecond;
 
     private CancellationTokenSource? _recordingCts;
     private Task? _recordingTask;
@@ -59,11 +65,12 @@ public class AudioEngine : IDisposable
             ? new WasapiLoopbackCapture(playbackDevice) 
             : new WasapiLoopbackCapture();
 
+        // バッファを余裕のある30秒に拡大 (遅延やジッター耐性)
         _loopbackBuffer = new BufferedWaveProvider(_loopbackCapture.WaveFormat)
         {
             ReadFully = true,
             DiscardOnBufferOverflow = true,
-            BufferDuration = TimeSpan.FromSeconds(5)
+            BufferDuration = TimeSpan.FromSeconds(30)
         };
 
         _loopbackCapture.DataAvailable += (s, a) =>
@@ -96,7 +103,7 @@ public class AudioEngine : IDisposable
             {
                 ReadFully = true,
                 DiscardOnBufferOverflow = true,
-                BufferDuration = TimeSpan.FromSeconds(5)
+                BufferDuration = TimeSpan.FromSeconds(30)
             };
 
             _micCapture.DataAvailable += (s, a) =>
@@ -123,11 +130,15 @@ public class AudioEngine : IDisposable
             _mixer.AddMixerInput(micSample);
         }
 
-        // 4. WAVライターの初期化 (16bit PCM に変換してファイルサイズ節約)
-        var waveProvider16 = new SampleToWaveProvider16(_mixer);
-        _waveWriter = new WaveFileWriter(outputFilePath, waveProvider16.WaveFormat);
+        // 4. WAVライターの初期化 (16bit PCM に変換: 48000Hz * 2ch * 2bytes = 192,000 bytes/sec)
+        _waveProvider16 = new SampleToWaveProvider16(_mixer);
+        _waveWriter = new WaveFileWriter(outputFilePath, _waveProvider16.WaveFormat);
 
-        // 5. 録音ループの開始
+        _bytesPerSecond = _waveProvider16.WaveFormat.AverageBytesPerSecond; // 192000
+        _totalBytesWritten = 0;
+        _stopwatch = Stopwatch.StartNew();
+
+        // 5. 録音ループの開始 (実時間追従ドレイン方式)
         _recordingCts = new CancellationTokenSource();
         var token = _recordingCts.Token;
 
@@ -137,20 +148,30 @@ public class AudioEngine : IDisposable
 
         _recordingTask = Task.Run(async () =>
         {
-            // 20ms ごとに読み取り (48000Hz * 2ch * 2bytes * 0.02s = 3840 bytes)
-            var bufferSize = targetWaveFormat.SampleRate * targetWaveFormat.Channels * 2 / 50;
-            var buffer = new byte[bufferSize];
+            var chunk = new byte[19200]; // 0.1秒単位
 
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    var read = waveProvider16.Read(buffer, 0, buffer.Length);
-                    if (read > 0)
+                    if (_stopwatch == null || _waveWriter == null || _waveProvider16 == null) break;
+
+                    // 経過した実時間に基づいて、現時点で書き込まれているべきバイト数を計算
+                    long targetBytes = (long)(_stopwatch.Elapsed.TotalSeconds * _bytesPerSecond);
+                    long bytesToRead = targetBytes - _totalBytesWritten;
+
+                    while (bytesToRead > 0 && !token.IsCancellationRequested)
                     {
-                        _waveWriter.Write(buffer, 0, read);
+                        int toRead = (int)Math.Min(bytesToRead, chunk.Length);
+                        int read = _waveProvider16.Read(chunk, 0, toRead);
+                        if (read <= 0) break;
+
+                        _waveWriter.Write(chunk, 0, read);
+                        _totalBytesWritten += read;
+                        bytesToRead -= read;
                     }
-                    await Task.Delay(20, token);
+
+                    await Task.Delay(10, token);
                 }
             }
             catch (OperationCanceledException)
@@ -186,10 +207,6 @@ public class AudioEngine : IDisposable
         {
             sampleProvider = new MonoToStereoSampleProvider(sampleProvider);
         }
-        else if (provider.WaveFormat.Channels > targetChannels)
-        {
-            // 多チャンネル -> Stereo (必要ならダウンミックス)
-        }
 
         // 3. ボリューム調整 (クリッピング防止)
         if (Math.Abs(volume - 1.0f) > 0.01f)
@@ -223,6 +240,28 @@ public class AudioEngine : IDisposable
                 }
             }
 
+            // 停止時点の実時間までの未書き込みサンプルをすべてフラッシュ
+            if (_stopwatch != null)
+            {
+                _stopwatch.Stop();
+                if (_waveWriter != null && _waveProvider16 != null)
+                {
+                    long finalTargetBytes = (long)(_stopwatch.Elapsed.TotalSeconds * _bytesPerSecond);
+                    long remainingBytes = finalTargetBytes - _totalBytesWritten;
+                    var flushBuffer = new byte[19200];
+                    while (remainingBytes > 0)
+                    {
+                        int toRead = (int)Math.Min(remainingBytes, flushBuffer.Length);
+                        int read = _waveProvider16.Read(flushBuffer, 0, toRead);
+                        if (read <= 0) break;
+
+                        _waveWriter.Write(flushBuffer, 0, read);
+                        _totalBytesWritten += read;
+                        remainingBytes -= read;
+                    }
+                }
+            }
+
             _waveWriter?.Flush();
             _waveWriter?.Dispose();
             _waveWriter = null;
@@ -237,6 +276,7 @@ public class AudioEngine : IDisposable
         {
             _recordingCts?.Dispose();
             _recordingCts = null;
+            _stopwatch = null;
         }
     }
 

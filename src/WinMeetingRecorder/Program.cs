@@ -1,4 +1,6 @@
+using NAudio.Wave;
 using WinMeetingRecorder.Audio;
+using WinMeetingRecorder.Ui;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -49,7 +51,7 @@ if (args.Length > 0)
         Console.WriteLine("========================================");
         Console.WriteLine(" 🎙️ 音声合成テスト録音モード (Phase 1)");
         Console.WriteLine("========================================");
-        Console.WriteLine($"録音時間: {durationSec} 秒");
+        Console.WriteLine($"録音時間目標: {durationSec} 秒");
         Console.WriteLine($"出力ファイル: {outputFile}");
         Console.WriteLine("スピーカーから音楽や動画を流しつつ、マイクで話してください...");
         Console.WriteLine("----------------------------------------");
@@ -74,6 +76,14 @@ if (args.Length > 0)
             Console.WriteLine($"✅ 録音完了！");
             Console.WriteLine($"   ファイルサイズ: {fileInfo.Length / 1024.0:F1} KB");
             Console.WriteLine($"   パス: {outputFile}");
+
+            try
+            {
+                using var reader = new AudioFileReader(outputFile);
+                Console.WriteLine($"   実録音時間: {reader.TotalTime.TotalSeconds:F2} 秒 (目標: {durationSec} 秒)");
+            }
+            catch { /* ignore */ }
+
             Console.WriteLine("手元Windows機でこのWAVファイルを再生し、音割れやピッチ異常がないか確認してください。");
         }
         catch (Exception ex)
@@ -91,11 +101,15 @@ if (args.Length > 0)
 // ==========================================
 builder.Services.AddSingleton<AudioEngine>();
 
-// 静的ファイル配信を有効化 (wwwroot)
 var app = builder.Build();
 
+// 静的ファイル配信 (フォールバック用)
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Web UI: 単一exe内蔵HTML配信 (404防止・単一exeポータブル対応)
+app.MapGet("/", () => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
+app.MapGet("/index.html", () => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
 
 // API: デバイス一覧取得
 app.MapGet("/api/devices", () =>
@@ -169,6 +183,9 @@ app.MapPost("/api/record/stop", async (AudioEngine engine) =>
         return Results.Problem($"録音停止に失敗しました: {ex.Message}");
     }
 });
+
+// 全ての非APIリクエストを内蔵UIにフォールバック
+app.MapFallback(() => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
 
 Console.WriteLine("========================================");
 Console.WriteLine(" 🎙️ WinMeetingRecorder サーバー起動");
