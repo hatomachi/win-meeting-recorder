@@ -38,48 +38,10 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -o ./publish
 
-      - name: Create Usage Guide & Zip Package
+      - name: Package Release Zip
         shell: pwsh
         run: |
-          $readme = @"
-========================================================================
-  🎙️ WinMeetingRecorder - 利用ガイド (Windows専用)
-========================================================================
-
-■ 概要
-Windows専用・ダイアログレス会議記録＆画面差分キャプチャツールです。
-相手の声（スピーカー Loopback）と自分の声（マイク）を音割れなく自動合成録音し、
-画面変化を検知してJPEGスクショを保存、会議終了時に社内GitLabへ自動プッシュします。
-
-■ 使い方
-1. 起動:
-   - `WinMeetingRecorder.exe` をダブルクリックするだけです。
-   - 既定のブラウザ（Edge/Chrome等）で自動的に操作画面 (http://localhost:5000) が開きます。
-   - 会社PCに .NET SDK や追加ランタイムをインストールする必要はありません。
-
-2. 会議の記録:
-   - 「社内GitLab連携設定」にサーバーURL、プロジェクトID、PATを入力して保存（初回のみ）。
-   - 「会議の記録を開始する」ボタンをクリックします。
-   - 会議中、重要なスライド等を手動で撮影したい場合は「今すぐスクショを1枚撮影」を押します。
-
-3. 記録の終了:
-   - 「記録を停止する」ボタンをクリックします。
-   - GitLabへ自動プッシュされ、成功するとローカル一時スプールが完全自動削除されます。
-
-4. アプリの終了:
-   - 画面右上の「✕ 終了」ボタンをクリックするか、黒いウィンドウで Ctrl + C を押します。
-
-■ コマンドライン引数 (上級者・自動化向け)
-   --no-browser, -nb             : 起動時にブラウザを自動で開かない
-   --list-devices, -l            : オーディオデバイス一覧を表示
-   --list-screens, -ls           : ディスプレイ一覧を表示
-   --test-audio, -t [秒数] [パス] : 音声合成テスト録音
-   --test-screen, -ts [秒数]     : 画面変化検知テスト
-   --pending-spool               : 未送信ローカルスプール一覧表示
-   --help, -h                    : ヘルプ表示
-========================================================================
-"@
-          Set-Content -Path ./publish/README_HOW_TO_USE.txt -Encoding UTF8 -Value $readme
+          Copy-Item ./README_HOW_TO_USE.txt ./publish/
           Compress-Archive -Path ./publish/WinMeetingRecorder.exe, ./publish/README_HOW_TO_USE.txt -DestinationPath ./publish/WinMeetingRecorder-win-x64.zip -Force
 
       - name: Upload Build Artifact
