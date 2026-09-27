@@ -57,6 +57,19 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
 
 ---
 
+## 🦊 GitLab検証環境（検証用リポジトリ ＆ 設定メモ）
+
+| 項目 | 設定値 |
+| :--- | :--- |
+| **GitLab URL** | `https://gitlab.com` |
+| **検証用リポジトリ** | `https://gitlab.com/test7891019/win-meeting-recorder-test` |
+| **プロジェクトパス** | `test7891019/win-meeting-recorder-test` |
+| **対象ブランチ** | `main` |
+| **保存先フォルダ** | `meetings` |
+| **PATスコープ知見** | GitLabのFine-grained PATでは「Repository: Read/Write」があればコミット作成（Commits API）は100%成功する。`GET /api/v4/projects/:id` は「Project: Read」が必要なため、疎通テストAPIではリポジトリコミットAPIへのフォールバックを実装して完全対応済み。 |
+
+---
+
 ## 🎯 現在地と次のタスク（セッション引き継ぎ情報）
 
 - **完了済みフェーズ**:
