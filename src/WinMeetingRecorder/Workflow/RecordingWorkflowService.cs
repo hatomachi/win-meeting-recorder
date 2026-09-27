@@ -128,13 +128,13 @@ public class RecordingWorkflowService
     /// <summary>
     /// 記録を開始する (Web API および タスクトレイ共通)
     /// </summary>
-    public async Task<RecordingStartResult> StartRecordingAsync(RecordStartOptions? options = null)
+    public Task<RecordingStartResult> StartRecordingAsync(RecordStartOptions? options = null)
     {
         lock (_lock)
         {
             if (_audioEngine.IsRecording || _screenEngine.IsCapturing)
             {
-                return new RecordingStartResult(false, "既に記録中です。");
+                return Task.FromResult(new RecordingStartResult(false, "既に記録中です。"));
             }
 
             int monitorIdx = options?.MonitorIndex ?? 0;
@@ -166,13 +166,13 @@ public class RecordingWorkflowService
                 Console.WriteLine($"[Workflow] 🎙️ 会議記録を開始しました: セッション {session.SessionId}");
                 RecordingStarted?.Invoke(session.SessionId);
 
-                return new RecordingStartResult(
+                return Task.FromResult(new RecordingStartResult(
                     true, 
                     "記録を開始しました。", 
                     session.SessionId, 
                     session.SpoolDirectory, 
                     outputPath, 
-                    enableScreen);
+                    enableScreen));
             }
             catch (Exception ex)
             {
@@ -187,7 +187,7 @@ public class RecordingWorkflowService
                 }
                 _activeSession = null;
                 _recordStartTime = null;
-                return new RecordingStartResult(false, $"記録開始に失敗しました: {ex.Message}");
+                return Task.FromResult(new RecordingStartResult(false, $"記録開始に失敗しました: {ex.Message}"));
             }
         }
     }

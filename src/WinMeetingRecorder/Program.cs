@@ -34,7 +34,13 @@ public static class Program
         // CLIモード判定
         if (nonFlagArgs.Length > 0)
         {
-            AttachConsole(ATTACH_PARENT_PROCESS);
+            if (AttachConsole(ATTACH_PARENT_PROCESS))
+            {
+                var stdOut = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
+                Console.SetOut(stdOut);
+                var stdErr = new StreamWriter(Console.OpenStandardError()) { AutoFlush = true };
+                Console.SetError(stdErr);
+            }
 
             var command = nonFlagArgs[0].ToLowerInvariant();
 
@@ -175,8 +181,8 @@ public static class Program
                 {
                     Console.WriteLine("✅ MP3変換成功！");
                     Console.WriteLine($"   元サイズ:     {result.OriginalSizeBytes / 1024.0:F1} KB");
-                    Console.WriteLine($"   変換後サイズ: {result.ConvertedSizeBytes / 1024.0:F1} KB");
-                    Console.WriteLine($"   削減率:       {result.ReductionPercentage:F1} %");
+                    Console.WriteLine($"   変換後サイズ: {result.CompressedSizeBytes / 1024.0:F1} KB");
+                    Console.WriteLine($"   削減率:       {result.CompressionRatioPercent:F1} %");
                     Console.WriteLine($"   所要時間:     {sw.ElapsedMilliseconds} ms");
                     Console.WriteLine($"   パス:         {outputMp3}");
                 }
@@ -214,15 +220,15 @@ public static class Program
                 {
                     engine.OnCaptured += (evt) =>
                     {
-                        Console.WriteLine($"📸 撮影検知! [{evt.CapturedAt:HH:mm:ss}] 原因: {evt.Reason} (差分: {evt.DiffScore * 100:F1}%) -> {Path.GetFileName(evt.FilePath)}");
+                        Console.WriteLine($"📸 撮影検知! [{evt.Timestamp:HH:mm:ss}] 原因: {evt.Reason} (差分: {evt.Diff * 100:F1}%) -> {Path.GetFileName(evt.FilePath)}");
                     };
 
                     var options = new ScreenCaptureOptions
                     {
                         MonitorIndex = monitorIdx,
-                        MinIntervalSeconds = 2.0,
-                        KeyframeIntervalSeconds = 30.0,
-                        DiffThreshold = 0.03f,
+                        MinIntervalSec = 2,
+                        MaxIntervalSec = 30,
+                        DiffThreshold = 0.03,
                         JpegQuality = 80L
                     };
 
@@ -947,7 +953,7 @@ public static class Program
                 await workflow.StopRecordingAsync();
             }
 
-            Task.Run(async () =>
+            _ = Task.Run(async () =>
             {
                 await Task.Delay(300);
                 Application.Exit();
@@ -990,17 +996,13 @@ public static class Program
         var workflowService = app.Services.GetRequiredService<RecordingWorkflowService>();
         var audioEngine = app.Services.GetRequiredService<AudioEngine>();
 
-        using var trayService = new TrayIconService(workflowService, audioEngine, () =>
+        var trayContext = new TrayApplicationContext(workflowService, audioEngine, async () =>
         {
-            Task.Run(async () =>
+            if (workflowService.IsRecording)
             {
-                if (workflowService.IsRecording)
-                {
-                    await workflowService.StopRecordingAsync();
-                }
-                await app.StopAsync();
-                Application.Exit();
-            });
+                await workflowService.StopRecordingAsync();
+            }
+            await app.StopAsync();
         });
 
         // 起動時に既定ブラウザを自動オープン
@@ -1018,7 +1020,7 @@ public static class Program
         }
 
         // STA メッセージループの開始 (タスクトレイ常駐)
-        Application.Run();
+        Application.Run(trayContext);
 
         // 終了待ち
         try
