@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using NAudio.Wave;
@@ -21,10 +22,14 @@ builder.Services.AddSingleton<ScreenCaptureEngine>();
 ActiveSessionState? activeSession = null;
 var sessionLock = new object();
 
+// ブラウザ自動オープン抑制フラグ判定
+bool noBrowser = args.Any(a => a.Equals("--no-browser", StringComparison.OrdinalIgnoreCase) || a.Equals("-nb", StringComparison.OrdinalIgnoreCase));
+var nonFlagArgs = args.Where(a => !a.Equals("--no-browser", StringComparison.OrdinalIgnoreCase) && !a.Equals("-nb", StringComparison.OrdinalIgnoreCase)).ToArray();
+
 // CLIモード判定
-if (args.Length > 0)
+if (nonFlagArgs.Length > 0)
 {
-    var command = args[0].ToLowerInvariant();
+    var command = nonFlagArgs[0].ToLowerInvariant();
 
     if (command == "--list-devices" || command == "-l")
     {
@@ -277,6 +282,7 @@ if (args.Length > 0)
         Console.WriteLine("  --test-screen, -ts [秒数] [モニタIndex] [出力先] : 画面変化検知スクショテスト");
         Console.WriteLine("  --test-gitlab [URL] [Project] [PAT] : GitLab REST API 接続テスト");
         Console.WriteLine("  --pending-spool                : ローカルスプールに残っている未送信一覧");
+        Console.WriteLine("  --no-browser, -nb              : 起動時に既定ブラウザを自動で開かない");
         Console.WriteLine("  --help, -h                     : このヘルプを表示");
         Console.WriteLine("========================================");
         return;
@@ -555,8 +561,63 @@ app.MapPost("/api/sessions/upload", async (
     return Results.Ok(result);
 });
 
+// API: 保管中の未送信スプールを削除
+app.MapDelete("/api/sessions/{sessionId}", (string sessionId, SpoolService spool) =>
+{
+    bool deleted = spool.DeleteSession(sessionId);
+    if (deleted)
+    {
+        return Results.Ok(new { message = $"セッション {sessionId} を削除しました。" });
+    }
+    return Results.NotFound(new { error = $"指定されたセッションが見つからないか削除できませんでした: {sessionId}" });
+});
+
+// API: アプリケーションの安全なシャットダウン
+app.MapPost("/api/app/shutdown", (
+    IHostApplicationLifetime lifetime, 
+    AudioEngine audioEngine, 
+    ScreenCaptureEngine screenEngine) =>
+{
+    lock (sessionLock)
+    {
+        if (audioEngine.IsRecording)
+        {
+            audioEngine.StopRecordingAsync().GetAwaiter().GetResult();
+        }
+        if (screenEngine.IsCapturing)
+        {
+            screenEngine.StopCaptureAsync().GetAwaiter().GetResult();
+        }
+    }
+
+    Task.Run(async () =>
+    {
+        await Task.Delay(500); // HTTPレスポンス送信完了待ち
+        lifetime.StopApplication();
+    });
+
+    return Results.Ok(new { message = "アプリケーションを終了します。" });
+});
+
 // 全ての非APIリクエストを内蔵UIにフォールバック
 app.MapFallback(() => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
+
+// サーバー起動完了時のブラウザ自動起動
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    if (!noBrowser)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("http://localhost:5000") { UseShellExecute = true });
+            Console.WriteLine("[Program] 🌐 既定ブラウザで http://localhost:5000 を自動起動しました。");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Program] ⚠️ ブラウザ自動起動スキップ: {ex.Message}");
+        }
+    }
+});
 
 // LAN IP の取得とバインド情報表示
 var hostName = Dns.GetHostName();

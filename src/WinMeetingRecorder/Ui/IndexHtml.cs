@@ -23,8 +23,14 @@ public static class IndexHtml
           <p class="text-xs text-slate-400">Windows専用 ダイアログレス会議記録 ＆ GitLab自動同期</p>
         </div>
       </div>
-      <div id="statusBadge" class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-        待機中
+      <div class="flex items-center space-x-2">
+        <div id="statusBadge" class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+          待機中
+        </div>
+        <button id="shutdownBtn" title="アプリを終了" class="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800/80 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 transition flex items-center space-x-1">
+          <span>✕</span>
+          <span>終了</span>
+        </button>
       </div>
     </div>
 
@@ -169,6 +175,7 @@ public static class IndexHtml
     const btnIcon = document.getElementById('btnIcon');
     const manualScreenshotBtn = document.getElementById('manualScreenshotBtn');
     const statusBadge = document.getElementById('statusBadge');
+    const shutdownBtn = document.getElementById('shutdownBtn');
     const timerDisplay = document.getElementById('timer');
     const screenshotCountDisplay = document.getElementById('screenshotCount');
     const logMessage = document.getElementById('logMessage');
@@ -347,9 +354,14 @@ public static class IndexHtml
                   <span class="font-mono text-white">${s.sessionId}</span>
                   <span class="text-slate-400 text-[10px] ml-1">(${s.screenshotCount}枚, ${sizeMb} MB)</span>
                 </div>
-                <button class="upload-session-btn px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium" data-id="${s.sessionId}">
-                  GitLabへ送信
-                </button>
+                <div class="flex items-center space-x-1.5">
+                  <button class="upload-session-btn px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium" data-id="${s.sessionId}">
+                    GitLabへ送信
+                  </button>
+                  <button class="delete-session-btn px-2 py-0.5 rounded bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] border border-slate-700 hover:border-rose-500 transition" data-id="${s.sessionId}" title="スプールを削除">
+                    🗑️
+                  </button>
+                </div>
               `;
               pendingList.appendChild(div);
             });
@@ -359,6 +371,16 @@ public static class IndexHtml
               btn.addEventListener('click', async (e) => {
                 const sid = e.target.getAttribute('data-id');
                 await uploadSingleSession(sid, e.target);
+              });
+            });
+
+            // 削除ボタンのハンドラ登録
+            document.querySelectorAll('.delete-session-btn').forEach(btn => {
+              btn.addEventListener('click', async (e) => {
+                const sid = e.target.getAttribute('data-id');
+                if (confirm(`スプール ${sid} を完全に削除しますか？\n（GitLabには送信されません）`)) {
+                  await deleteSingleSession(sid);
+                }
               });
             });
           } else {
@@ -398,6 +420,22 @@ public static class IndexHtml
           btnElement.disabled = false;
           btnElement.textContent = '再送信';
         }
+      }
+    }
+
+    async function deleteSingleSession(sessionId) {
+      logMessage.innerHTML = `<span class="text-slate-400">🗑️ セッション ${sessionId} を削除中...</span>`;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+        if (res.ok) {
+          logMessage.innerHTML = `<span class="text-slate-300">🗑️ セッション ${sessionId} を削除しました。</span>`;
+          await loadPendingSessions();
+        } else {
+          const data = await res.json();
+          logMessage.innerHTML = `<span class="text-rose-400">❌ 削除失敗: ${data.error || 'エラー'}</span>`;
+        }
+      } catch (err) {
+        logMessage.innerHTML = `<span class="text-rose-400">❌ 削除例外: ${err.message}</span>`;
       }
     }
 
@@ -519,6 +557,8 @@ public static class IndexHtml
             btnText.textContent = '記録を停止する';
             btnIcon.className = 'inline-block w-4 h-4 bg-red-400 rounded-sm';
             manualScreenshotBtn.classList.remove('hidden');
+            shutdownBtn.disabled = true;
+            shutdownBtn.classList.add('opacity-30', 'cursor-not-allowed');
             playbackSelect.disabled = true;
             captureSelect.disabled = true;
             screenSelect.disabled = true;
@@ -544,6 +584,8 @@ public static class IndexHtml
           if (res.ok) {
             isRecording = false;
             stopTimer();
+            shutdownBtn.disabled = false;
+            shutdownBtn.classList.remove('opacity-30', 'cursor-not-allowed');
             playbackSelect.disabled = false;
             captureSelect.disabled = false;
             screenSelect.disabled = false;
@@ -597,6 +639,32 @@ public static class IndexHtml
         logMessage.textContent = `スクショエラー: ${err.message}`;
       } finally {
         manualScreenshotBtn.disabled = false;
+      }
+    });
+
+    // アプリ終了ハンドラ
+    shutdownBtn.addEventListener('click', async () => {
+      if (isRecording) {
+        alert('会議の記録中は終了できません。先に記録を停止してください。');
+        return;
+      }
+      if (!confirm('WinMeetingRecorder を終了しますか？')) {
+        return;
+      }
+
+      try {
+        shutdownBtn.disabled = true;
+        await fetch('/api/app/shutdown', { method: 'POST' });
+        document.body.innerHTML = `
+          <div class="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+            <span class="text-5xl mb-4">🛑</span>
+            <h1 class="text-2xl font-bold text-white mb-2">WinMeetingRecorder は終了しました</h1>
+            <p class="text-sm text-slate-400">このブラウザタブを閉じて構いません。お疲れ様でした！</p>
+          </div>
+        `;
+      } catch (err) {
+        alert('終了リクエストに失敗しました: ' + err.message);
+        shutdownBtn.disabled = false;
       }
     });
 
