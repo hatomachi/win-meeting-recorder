@@ -30,6 +30,11 @@ public class AudioEngine : IDisposable
     public bool IsRecording { get; private set; }
     public string? CurrentOutputFile { get; private set; }
 
+    /// <summary>
+    /// 現在の合成音量レベル (0.0f ~ 1.0f)。タスクトレイ等の波形アニメーション表示用
+    /// </summary>
+    public float CurrentAudioLevel { get; private set; }
+
     public float LoopbackVolume { get; set; } = 0.85f;
     public float MicVolume { get; set; } = 0.85f;
 
@@ -166,6 +171,17 @@ public class AudioEngine : IDisposable
                         int read = _waveProvider16.Read(chunk, 0, toRead);
                         if (read <= 0) break;
 
+                        // リアルタイム音量ピークの算出 (16bit PCM Stereo)
+                        float maxPeak = 0f;
+                        for (int i = 0; i < read - 1; i += 2)
+                        {
+                            short sample = (short)(chunk[i] | (chunk[i + 1] << 8));
+                            float abs = Math.Abs(sample / 32768f);
+                            if (abs > maxPeak) maxPeak = abs;
+                        }
+                        // 瞬間ピークを反映し、適度な減衰でなめらかに追従
+                        CurrentAudioLevel = Math.Max(maxPeak, CurrentAudioLevel * 0.85f);
+
                         _waveWriter.Write(chunk, 0, read);
                         _totalBytesWritten += read;
                         bytesToRead -= read;
@@ -225,6 +241,7 @@ public class AudioEngine : IDisposable
         if (!IsRecording) return;
 
         IsRecording = false;
+        CurrentAudioLevel = 0f;
 
         try
         {

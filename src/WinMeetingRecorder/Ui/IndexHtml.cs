@@ -234,8 +234,13 @@ public static class IndexHtml
       </div>
       <div class="w-px h-8 bg-slate-800"></div>
       <div>
-        <p class="text-xs text-slate-400">音声ミキシング</p>
-        <p class="text-sm font-semibold text-emerald-400 mt-1">48kHz ➜ MP3</p>
+        <p class="text-xs text-slate-400">音声レベル</p>
+        <div class="mt-1.5 flex flex-col items-center">
+          <div class="w-16 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+            <div id="audioLevelBar" class="h-full bg-emerald-500 rounded-full transition-all duration-100" style="width: 0%"></div>
+          </div>
+          <span id="audioLevelText" class="text-[10px] text-slate-500 font-mono mt-0.5">待機</span>
+        </div>
       </div>
     </div>
 
@@ -250,6 +255,11 @@ public static class IndexHtml
         <span>📸</span>
         <span>今すぐスクショを1枚撮影 (手動)</span>
       </button>
+
+      <div class="flex items-center justify-center space-x-1.5 text-[11px] text-slate-400 pt-0.5">
+        <span>💡</span>
+        <span>画面右下のタスクトレイに常駐中。トレイアイコンの波形アニメーションで音声入力状況をチラ見確認できます。</span>
+      </div>
     </div>
 
     <!-- 自動パイプライン進捗インジケーター (o - o - o - o) -->
@@ -358,6 +368,8 @@ public static class IndexHtml
     const shutdownBtn = document.getElementById('shutdownBtn');
     const timerDisplay = document.getElementById('timer');
     const screenshotCountDisplay = document.getElementById('screenshotCount');
+    const audioLevelBar = document.getElementById('audioLevelBar');
+    const audioLevelText = document.getElementById('audioLevelText');
     const logMessage = document.getElementById('logMessage');
     const playbackSelect = document.getElementById('playbackSelect');
     const captureSelect = document.getElementById('captureSelect');
@@ -981,15 +993,32 @@ public static class IndexHtml
           const res = await fetch('/api/status');
           if (res.ok) {
             const data = await res.json();
-            screenshotCountDisplay.innerHTML = `${data.capturedScreenshots} <span class="text-xs font-normal text-slate-400">枚</span>`;
+            const count = data.capturedCount ?? data.capturedScreenshots ?? 0;
+            screenshotCountDisplay.innerHTML = `${count} <span class="text-xs font-normal text-slate-400">枚</span>`;
+            
+            // 音声レベルメーターのリアルタイム更新
+            const levelPct = Math.round((data.audioLevel || 0) * 100);
+            audioLevelBar.style.width = Math.min(100, levelPct * 1.5) + '%';
+            if (levelPct > 3) {
+              audioLevelBar.className = 'h-full bg-emerald-400 rounded-full transition-all duration-100 shadow-[0_0_8px_rgba(52,211,153,0.7)]';
+              audioLevelText.textContent = `${levelPct}% 🔊`;
+              audioLevelText.className = 'text-[10px] text-emerald-400 font-mono mt-0.5 font-bold';
+            } else {
+              audioLevelBar.className = 'h-full bg-slate-600 rounded-full transition-all duration-100';
+              audioLevelText.textContent = '無音';
+              audioLevelText.className = 'text-[10px] text-slate-400 font-mono mt-0.5';
+            }
           }
         } catch { /* ignore */ }
-      }, 1000);
+      }, 500);
     }
 
     function stopTimer() {
       clearInterval(timerInterval);
       clearInterval(statusInterval);
+      audioLevelBar.style.width = '0%';
+      audioLevelText.textContent = '待機';
+      audioLevelText.className = 'text-[10px] text-slate-500 font-mono mt-0.5';
     }
 
     async function startRecording() {
@@ -1136,6 +1165,41 @@ public static class IndexHtml
     loadDevicesAndScreens();
     loadConfig();
     loadPendingSessions();
+
+    // タスクトレイ操作等とのバックグラウンド状態同期 (2秒間隔)
+    setInterval(async () => {
+      if (toggleBtn.disabled) return;
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const st = await res.json();
+          if (st.isRecording && !isRecording) {
+            // タスクトレイ側で録音開始された
+            isRecording = true;
+            currentSessionId = st.sessionId;
+            activeMinutesSessionId = currentSessionId;
+            statusBadge.textContent = '● 記録中';
+            statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse';
+            toggleBtn.className = 'w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center space-x-2';
+            btnIcon.className = 'inline-block w-4 h-4 rounded bg-red-400';
+            btnText.textContent = '会議の記録を停止する';
+            manualScreenshotBtn.classList.remove('hidden');
+            startTimer();
+          } else if (!st.isRecording && isRecording) {
+            // タスクトレイ側で録音停止された
+            stopTimer();
+            isRecording = false;
+            statusBadge.textContent = '待機中';
+            statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+            toggleBtn.className = 'w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all duration-200 bg-red-600 hover:bg-red-500 text-white flex items-center justify-center space-x-2';
+            btnIcon.className = 'inline-block w-4 h-4 rounded-full bg-white animate-pulse';
+            btnText.textContent = '会議の記録を開始する';
+            manualScreenshotBtn.classList.add('hidden');
+            await loadPendingSessions();
+          }
+        }
+      } catch { /* ignore */ }
+    }, 2000);
   </script>
 </body>
 </html>
