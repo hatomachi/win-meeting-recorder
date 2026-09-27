@@ -98,8 +98,34 @@ public class SpoolService
             var audioPath = Path.Combine(metadata.SpoolDirectory, metadata.AudioFileName);
             metadata.HasAudio = File.Exists(audioPath);
 
+            var mp3Path = Path.Combine(metadata.SpoolDirectory, metadata.Mp3FileName ?? "meeting_audio.mp3");
+            metadata.HasMp3 = File.Exists(mp3Path);
+
+            var transcriptPath = Path.Combine(metadata.SpoolDirectory, metadata.TranscriptFileName ?? "transcript.json");
+            metadata.HasTranscript = File.Exists(transcriptPath);
+
             SaveMetadata(metadata);
             return metadata;
+        }
+    }
+
+    /// <summary>
+    /// メタデータを明示的に更新・保存します
+    /// </summary>
+    public void UpdateMetadata(MeetingSessionMetadata metadata)
+    {
+        lock (_lock)
+        {
+            var audioPath = Path.Combine(metadata.SpoolDirectory, metadata.AudioFileName);
+            metadata.HasAudio = File.Exists(audioPath);
+
+            var mp3Path = Path.Combine(metadata.SpoolDirectory, metadata.Mp3FileName ?? "meeting_audio.mp3");
+            metadata.HasMp3 = File.Exists(mp3Path);
+
+            var transcriptPath = Path.Combine(metadata.SpoolDirectory, metadata.TranscriptFileName ?? "transcript.json");
+            metadata.HasTranscript = File.Exists(transcriptPath);
+
+            SaveMetadata(metadata);
         }
     }
 
@@ -125,6 +151,8 @@ public class SpoolService
                 if (meta != null)
                 {
                     meta.SpoolDirectory = sessionDir;
+                    meta.HasMp3 = File.Exists(Path.Combine(sessionDir, meta.Mp3FileName ?? "meeting_audio.mp3"));
+                    meta.HasTranscript = File.Exists(Path.Combine(sessionDir, meta.TranscriptFileName ?? "transcript.json"));
                     return meta;
                 }
             }
@@ -147,6 +175,12 @@ public class SpoolService
 
         var audioFile = Path.Combine(sessionDir, "meeting_audio.wav");
         recovered.HasAudio = File.Exists(audioFile);
+
+        var mp3File = Path.Combine(sessionDir, "meeting_audio.mp3");
+        recovered.HasMp3 = File.Exists(mp3File);
+
+        var transcriptFile = Path.Combine(sessionDir, "transcript.json");
+        recovered.HasTranscript = File.Exists(transcriptFile);
 
         var imagesDir = Path.Combine(sessionDir, "images");
         if (Directory.Exists(imagesDir))
@@ -202,6 +236,8 @@ public class SpoolService
                 CreatedAt = meta?.StartTime ?? dirInfo.CreationTime,
                 ScreenshotCount = meta?.Images.Count ?? 0,
                 HasAudio = meta?.HasAudio ?? File.Exists(Path.Combine(subDir, "meeting_audio.wav")),
+                HasMp3 = meta?.HasMp3 ?? File.Exists(Path.Combine(subDir, "meeting_audio.mp3")),
+                HasTranscript = meta?.HasTranscript ?? File.Exists(Path.Combine(subDir, "transcript.json")),
                 TotalSizeBytes = totalBytes
             });
         }

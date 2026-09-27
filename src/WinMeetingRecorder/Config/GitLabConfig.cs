@@ -55,4 +55,5 @@ public class GitLabConfig
 public class AppConfig
 {
     public GitLabConfig GitLab { get; set; } = new();
+    public WhisperConfig Whisper { get; set; } = new();
 }

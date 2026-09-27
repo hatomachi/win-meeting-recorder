@@ -8,6 +8,7 @@ using WinMeetingRecorder.GitLab;
 using WinMeetingRecorder.Screen;
 using WinMeetingRecorder.Spool;
 using WinMeetingRecorder.Ui;
+using WinMeetingRecorder.Whisper;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +16,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<ConfigService>();
 builder.Services.AddSingleton<SpoolService>();
 builder.Services.AddSingleton<GitLabService>();
+builder.Services.AddSingleton<WhisperService>();
 builder.Services.AddSingleton<AudioEngine>();
 builder.Services.AddSingleton<ScreenCaptureEngine>();
 
@@ -139,6 +141,42 @@ if (nonFlagArgs.Length > 0)
         return;
     }
 
+    if (command == "--test-mp3")
+    {
+        string inputWav = args.Length > 1 ? args[1] : "test_mixed.wav";
+        string outputMp3 = args.Length > 2 ? args[2] : Path.ChangeExtension(inputWav, ".mp3");
+        inputWav = Path.GetFullPath(inputWav);
+        outputMp3 = Path.GetFullPath(outputMp3);
+
+        Console.WriteLine("========================================");
+        Console.WriteLine(" 🎵 音声MP3変換テスト (Phase 6A)");
+        Console.WriteLine("========================================");
+        Console.WriteLine($"入力WAV: {inputWav}");
+        Console.WriteLine($"出力MP3: {outputMp3}");
+        Console.WriteLine("----------------------------------------");
+
+        AudioConverter.ListSupportedMp3Formats();
+        Console.WriteLine("----------------------------------------");
+        Console.WriteLine("MP3エンコード実行中 (24kHz Mono 64kbps)...");
+
+        var result = AudioConverter.ConvertWavToMp3(inputWav, outputMp3, targetSampleRate: 24000, targetChannels: 1, desiredBitRate: 64000);
+        if (result.Success)
+        {
+            Console.WriteLine("✅ MP3変換成功！");
+            Console.WriteLine($"   元サイズ: {result.OriginalSizeBytes / 1024.0:F1} KB");
+            Console.WriteLine($"   圧縮後:   {result.CompressedSizeBytes / 1024.0:F1} KB");
+            Console.WriteLine($"   削減率:   {result.CompressionRatioPercent:F1} %");
+            Console.WriteLine($"   所要時間: {result.ElapsedMilliseconds} ms");
+            Console.WriteLine($"   保存先:   {result.OutputFilePath}");
+        }
+        else
+        {
+            Console.WriteLine($"❌ MP3変換失敗: {result.ErrorMessage}");
+        }
+        Console.WriteLine("========================================");
+        return;
+    }
+
     if (command == "--test-screen" || command == "-ts")
     {
         int durationSec = 15;
@@ -253,6 +291,76 @@ if (nonFlagArgs.Length > 0)
         return;
     }
 
+    if (command == "--test-whisper")
+    {
+        var configService = new ConfigService();
+        var whisperService = new WhisperService();
+        var config = configService.LoadConfig().Whisper;
+
+        if (args.Length > 1) config.BaseUrl = args[1];
+        string audioFile = args.Length > 2 ? args[2] : "test_3s.mp3";
+        if (args.Length > 3) config.ApiKey = args[3];
+
+        audioFile = Path.GetFullPath(audioFile);
+
+        Console.WriteLine("========================================");
+        Console.WriteLine(" 🎙️ OpenAI Whisper API 文字起こしテスト (Phase 6B)");
+        Console.WriteLine("========================================");
+        Console.WriteLine($"Base URL: {config.BaseUrl}");
+        Console.WriteLine($"音声ファイル: {audioFile}");
+        Console.WriteLine($"モデル: {config.Model}");
+        Console.WriteLine($"言語: {config.Language}");
+        Console.WriteLine("----------------------------------------");
+
+        // 疎通確認
+        Console.WriteLine("1. サーバー疎通テスト実行中...");
+        var testResult = whisperService.TestConnectionAsync(config).GetAwaiter().GetResult();
+        if (testResult.Success)
+        {
+            Console.WriteLine($"✅ {testResult.Message}");
+        }
+        else
+        {
+            Console.WriteLine($"⚠️ 疎通警告: {testResult.Message}");
+        }
+
+        // 音声文字起こし実行
+        if (File.Exists(audioFile))
+        {
+            Console.WriteLine("\n2. 音声文字起こし (POST /v1/audio/transcriptions) 送信中...");
+            var trResult = whisperService.TranscribeAudioAsync(audioFile, config).GetAwaiter().GetResult();
+            if (trResult.Success)
+            {
+                Console.WriteLine($"✅ 文字起こし成功！");
+                Console.WriteLine($"   セグメント数: {trResult.SegmentCount}");
+                Console.WriteLine($"   所要時間:     {trResult.ElapsedMilliseconds} ms");
+                Console.WriteLine($"   保存先:       {trResult.TranscriptFilePath}");
+                Console.WriteLine("\n[認識テキスト全文]");
+                Console.WriteLine(trResult.Text);
+
+                if (trResult.Response?.Segments.Count > 0)
+                {
+                    Console.WriteLine("\n[各セグメント]");
+                    foreach (var s in trResult.Response.Segments)
+                    {
+                        Console.WriteLine($"  [{s.Start:F1}s - {s.End:F1}s] {s.Text}");
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"❌ 文字起こし失敗: {trResult.Message}");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"⚠️ 指定された音声ファイルが見つからないため、文字起こし実行はスキップしました: {audioFile}");
+        }
+
+        Console.WriteLine("========================================");
+        return;
+    }
+
     if (command == "--pending-spool")
     {
         var spool = new SpoolService();
@@ -262,7 +370,7 @@ if (nonFlagArgs.Length > 0)
         Console.WriteLine("========================================");
         foreach (var p in pendings)
         {
-            Console.WriteLine($"  [{p.SessionId}] {p.CreatedAt:yyyy-MM-dd HH:mm:ss} | スクショ: {p.ScreenshotCount}枚 | 音声: {(p.HasAudio ? "あり" : "なし")} | サイズ: {p.TotalSizeBytes / (1024.0 * 1024.0):F1} MB");
+            Console.WriteLine($"  [{p.SessionId}] {p.CreatedAt:yyyy-MM-dd HH:mm:ss} | スクショ: {p.ScreenshotCount}枚 | 音声: {(p.HasAudio ? "あり" : "なし")} | MP3: {(p.HasMp3 ? "あり" : "なし")} | 文字起こし: {(p.HasTranscript ? "済" : "未")} | サイズ: {p.TotalSizeBytes / (1024.0 * 1024.0):F1} MB");
             Console.WriteLine($"      パス: {p.DirectoryPath}");
         }
         Console.WriteLine("========================================");
@@ -279,8 +387,10 @@ if (nonFlagArgs.Length > 0)
         Console.WriteLine("  --list-devices, -l             : オーディオ入出力デバイス一覧を表示");
         Console.WriteLine("  --list-screens, -ls            : ディスプレイ一覧を表示");
         Console.WriteLine("  --test-audio, -t [秒数] [出力パス] : 音声合成（相手の声＋マイク）テスト録音");
+        Console.WriteLine("  --test-mp3 [WAVパス] [MP3パス] : 音声MP3軽量化 (24kHz Mono 64kbps) テスト");
         Console.WriteLine("  --test-screen, -ts [秒数] [モニタIndex] [出力先] : 画面変化検知スクショテスト");
         Console.WriteLine("  --test-gitlab [URL] [Project] [PAT] : GitLab REST API 接続テスト");
+        Console.WriteLine("  --test-whisper [BaseUrl] [Audio] [Key] : Whisper API 文字起こしテスト");
         Console.WriteLine("  --pending-spool                : ローカルスプールに残っている未送信一覧");
         Console.WriteLine("  --no-browser, -nb              : 起動時に既定ブラウザを自動で開かない");
         Console.WriteLine("  --help, -h                     : このヘルプを表示");
@@ -334,6 +444,67 @@ app.MapPost("/api/config", (ConfigService configService, AppConfig newConfig) =>
 app.MapPost("/api/gitlab/test", async (GitLabService gitLabService, GitLabConfig config) =>
 {
     var result = await gitLabService.TestConnectionAsync(config);
+    return Results.Ok(result);
+});
+
+// API: Whisper 接続テスト
+app.MapPost("/api/whisper/test", async (WhisperService whisperService, WhisperConfig config) =>
+{
+    var result = await whisperService.TestConnectionAsync(config);
+    return Results.Ok(result);
+});
+
+// API: 指定セッションを手動で Whisper 文字起こし実行
+app.MapPost("/api/whisper/transcribe", async (
+    SessionTranscribeRequest req,
+    SpoolService spool,
+    WhisperService whisperService,
+    ConfigService configService) =>
+{
+    if (string.IsNullOrWhiteSpace(req.SessionId))
+    {
+        return Results.BadRequest(new { error = "セッションIDが指定されていません。" });
+    }
+
+    var config = configService.LoadConfig().Whisper;
+    if (!config.IsConfigured)
+    {
+        return Results.BadRequest(new { error = "Whisperの設定が未完了です。先にBase URLを設定してください。" });
+    }
+
+    var sessionDir = Path.Combine(spool.SpoolBaseDir, req.SessionId);
+    if (!Directory.Exists(sessionDir))
+    {
+        return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {req.SessionId}" });
+    }
+
+    var metadata = spool.GetSessionMetadata(sessionDir);
+    // 音声ファイルの特定 (MP3優先、なければWAVからMP3変換、それもなければWAV)
+    var mp3Path = Path.Combine(sessionDir, "meeting_audio.mp3");
+    var wavPath = Path.Combine(sessionDir, "meeting_audio.wav");
+
+    string targetAudio;
+    if (File.Exists(mp3Path))
+    {
+        targetAudio = mp3Path;
+    }
+    else if (File.Exists(wavPath))
+    {
+        // MP3 がまだ無ければ自動変換
+        var conv = AudioConverter.ConvertWavToMp3(wavPath, mp3Path);
+        targetAudio = conv.Success ? mp3Path : wavPath;
+    }
+    else
+    {
+        return Results.BadRequest(new { error = "セッション内に音声ファイルが存在しません。" });
+    }
+
+    var result = await whisperService.TranscribeAudioAsync(targetAudio, config);
+    if (result.Success && metadata != null)
+    {
+        spool.UpdateMetadata(metadata);
+    }
+
     return Results.Ok(result);
 });
 
@@ -456,11 +627,13 @@ app.MapPost("/api/record/screenshot", (ScreenCaptureEngine screenEngine) =>
 });
 
 // API: 録音・画面キャプチャ停止 ＆ (任意) GitLab 自動アップロード
+// API: 録音・画面キャプチャ停止 ＆ MP3軽量化 ＆ (任意) Whisper文字起こし ＆ (任意) GitLab 自動アップロード
 app.MapPost("/api/record/stop", async (
     AudioEngine audioEngine, 
     ScreenCaptureEngine screenEngine,
     SpoolService spool,
     GitLabService gitLabService,
+    WhisperService whisperService,
     ConfigService configService) =>
 {
     string? stoppingSessionId;
@@ -490,22 +663,51 @@ app.MapPost("/api/record/stop", async (
             await audioEngine.StopRecordingAsync();
         }
 
+        AudioConversionResult? mp3Result = null;
+        string? targetAudioPath = null;
+
+        // 1. WAV -> MP3 自動軽量化 (24kHz Mono 64kbps)
+        if (!string.IsNullOrEmpty(stoppingSessionDir))
+        {
+            var wavPath = Path.Combine(stoppingSessionDir, "meeting_audio.wav");
+            var mp3Path = Path.Combine(stoppingSessionDir, "meeting_audio.mp3");
+
+            if (File.Exists(wavPath))
+            {
+                mp3Result = AudioConverter.ConvertWavToMp3(wavPath, mp3Path, targetSampleRate: 24000, targetChannels: 1, desiredBitRate: 64000);
+                targetAudioPath = mp3Result.Success ? mp3Path : wavPath;
+            }
+        }
+
+        // 2. メタデータの確定
         MeetingSessionMetadata? metadata = null;
         if (!string.IsNullOrEmpty(stoppingSessionDir))
         {
             metadata = spool.FinishSession(stoppingSessionDir);
         }
 
-        // GitLab 自動アップロードの判定
-        GitLabUploadResult? gitLabResult = null;
-        var config = configService.LoadConfig().GitLab;
+        var appConfig = configService.LoadConfig();
 
-        if (config.AutoUploadOnStop && config.IsConfigured && !string.IsNullOrEmpty(stoppingSessionDir))
+        // 3. Whisper 自動文字起こし (設定有効時)
+        WhisperTranscribeResult? whisperResult = null;
+        if (appConfig.Whisper.AutoTranscribeOnStop && appConfig.Whisper.IsConfigured && !string.IsNullOrEmpty(targetAudioPath))
+        {
+            Console.WriteLine($"[Program] 🎙️ 会議終了時 Whisper 自動文字起こし開始: {Path.GetFileName(targetAudioPath)}");
+            whisperResult = await whisperService.TranscribeAudioAsync(targetAudioPath, appConfig.Whisper);
+            if (whisperResult.Success && metadata != null)
+            {
+                spool.UpdateMetadata(metadata);
+            }
+        }
+
+        // 4. GitLab 自動アップロード (設定有効時)
+        GitLabUploadResult? gitLabResult = null;
+        if (appConfig.GitLab.AutoUploadOnStop && appConfig.GitLab.IsConfigured && !string.IsNullOrEmpty(stoppingSessionDir))
         {
             Console.WriteLine($"[Program] 自動アップロード開始: セッション {stoppingSessionId}");
             gitLabResult = await gitLabService.UploadSessionAsync(
                 stoppingSessionDir, 
-                config, 
+                appConfig.GitLab, 
                 metadata, 
                 deleteOnSuccess: true);
         }
@@ -516,6 +718,8 @@ app.MapPost("/api/record/stop", async (
             sessionId = stoppingSessionId,
             audioFile = audioEngine.CurrentOutputFile,
             capturedCount = screenEngine.CapturedCount,
+            mp3Conversion = mp3Result,
+            whisperTranscription = whisperResult,
             gitLabUpload = gitLabResult
         });
     }
@@ -651,5 +855,7 @@ public record RecordStartRequest(
     bool? EnableScreenCapture);
 
 public record SessionUploadRequest(string SessionId);
+
+public record SessionTranscribeRequest(string SessionId);
 
 public record ActiveSessionState(string SessionId, string SpoolDirectory);

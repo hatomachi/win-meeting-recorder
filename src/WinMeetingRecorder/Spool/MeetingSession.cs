@@ -12,6 +12,10 @@ public class MeetingSessionMetadata
     public double DurationSeconds { get; set; }
     public string AudioFileName { get; set; } = "meeting_audio.wav";
     public bool HasAudio { get; set; }
+    public string? Mp3FileName { get; set; } = "meeting_audio.mp3";
+    public bool HasMp3 { get; set; }
+    public string? TranscriptFileName { get; set; } = "transcript.json";
+    public bool HasTranscript { get; set; }
     public int MonitorIndex { get; set; }
     public string? MonitorName { get; set; }
     public List<SessionImageItem> Images { get; set; } = new();
@@ -40,5 +44,7 @@ public class PendingSessionSummary
     public DateTime CreatedAt { get; set; }
     public int ScreenshotCount { get; set; }
     public bool HasAudio { get; set; }
+    public bool HasMp3 { get; set; }
+    public bool HasTranscript { get; set; }
     public long TotalSizeBytes { get; set; }
 }

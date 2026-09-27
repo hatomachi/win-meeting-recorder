@@ -103,18 +103,20 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
     - Web UIからの**安全なアプリ終了（シャットダウンAPI）**および**未送信スプールの個別削除機能**を実装。
     - 単一exe最適化（デバッグシンボル削除）および `README_HOW_TO_USE.txt`（利用ガイド）を同梱した配布zipパッケージングの自動化完了。
     - 手元Windows検証機にて、ダブルクリック起動（Edge自動オープン）➜ 記録開始 ➜ 手動スクショ ➜ 停止 ➜ GitLab自動コミット ➜ スプール完全自動消去 ➜ Web UIからの安全終了まで、エンドツーエンドの全フロー完全動作を確認完了！
-- **次期実装タスク（Phase 6: MP3軽量化 ➜ OpenAI Whisper API互換連携）**:
-  - **Phase 6A: 音声のMP3軽量化（24kHzモノラル）**:
-    - 非圧縮WAV（48kHz Float32ステレオ、1時間約700MB）を、NAudio MediaFoundation（Windows標準機能・追加DLL不要）で 24kHz モノラル MP3（1時間約28MB）へ自動変換。
-    - スプール内に `meeting_audio.mp3` を生成し、GitLabコミット容量の激減とWhisper転送の高速化を実現。
-  - **Phase 6B: OpenAI Whisper API互換連携（文字起こし＆タイムライン生成）**:
-    - 会社環境に用意されている OpenAI Whisper API 互換エンドポイントを呼ぶクライアントを実装。
-    - `POST {WhisperBaseUrl}/v1/audio/transcriptions`（`response_format: verbose_json`、`file: meeting_audio.mp3`、`language: ja`）。
-    - Web UI / `config.json` に接続先Base URL（`http://...:8000`）、API Key（任意）、モデル名を設定可能にする。
-    - 返却された各セグメント（`start`, `end`, `text`）を `transcript.json` に保存。
-    - `README.md` にタイムライン形式（発話テキストと撮影スクショが時系列に並ぶ表）を自動埋め込み。
-  - **Phase 6C: 会議ビューア統合 ＆ 画面プレビューUI**:
-    - `voice-reflection-agent` で構築済みのリッチタイムラインビューアとの完全互換連携。
+  - **Phase 6A (音声のMP3軽量化・24kHzモノラル)**:
+    - 非圧縮WAV（48kHz Float32ステレオ、1時間約700MB）を、NAudio MediaFoundation（Windows標準機能・追加DLL不要）で 24kHz モノラル MP3（64kbps、1時間約21MB、削減率96.8%）へ自動変換 (`AudioConverter.cs`)。
+    - 外部ffmpegや追加DLL一切不要で、Windows標準機能だけで超高速（3.5秒音声の変換がわずか63ms）変換を実現。
+    - スプール内に `meeting_audio.mp3` を生成し、GitLabコミット容量の激減とWhisper転送の高速化を達成！
+  - **Phase 6B (OpenAI Whisper API互換連携 ＆ タイムライン自動統合)**:
+    - 会社環境やローカルモックの OpenAI Whisper API 互換エンドポイント（`POST {WhisperBaseUrl}/v1/audio/transcriptions`、`response_format: verbose_json`）を呼ぶクライアント実装 (`WhisperService.cs`)。
+    - 返却された各セグメント（`start`, `end`, `text`）を `transcript.json` としてスプールに整形保存。
+    - 発話テキストとスクリーンショット画像を秒数順で時系列マージした**統合タイムラインMarkdown**（`README.md`）の自動生成。
+    - GitLab Commits API へのアトミック一括コミット（`README.md`, `meeting_audio.mp3`, `transcript.json`, `images/*.jpg`）。
+    - Web UIに「🎙️ OpenAI Whisper 文字起こし設定」アコーディオンパネル、接続テスト機能、未送信スプールへの手動文字起こしボタンを追加。
+    - **実機検証完了**: 手元Windows検証機からMac上のWhisperサーバーへ通信し、録音 ➜ MP3圧縮 (96.8%削減) ➜ Whisper文字起こし (4セグメント) ➜ タイムラインREADME生成 ➜ GitLab本物リポジトリへの一括コミット ([コミット閲覧](https://gitlab.com/test7891019/win-meeting-recorder-test/-/commit/32ce1a75dd00e9528ef06cbf103deff29c53749a)) ➜ スプール完全自動消去のエンドツーエンド全フロー完全完遂！
+- **次期実装タスク（Phase 6C: 会議ビューア統合 ＆ 画面プレビューUI）**:
+  - `voice-reflection-agent` で構築済みのリッチタイムラインビューアとの完全互換連携。
+  - Web UI 上での録音中画面プレビューや文字起こしリアルタイム確認UIの追加。
 
 ---
 

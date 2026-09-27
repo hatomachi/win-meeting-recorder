@@ -116,6 +116,62 @@ public static class IndexHtml
       </div>
     </div>
 
+    <!-- Whisper 文字起こし設定アコーディオン (Phase 6) -->
+    <div class="border border-slate-700 rounded-xl bg-slate-950/40 overflow-hidden">
+      <button id="toggleWhisperBtn" class="w-full px-4 py-3 text-left text-xs font-semibold text-slate-300 flex items-center justify-between hover:bg-slate-800/50 transition">
+        <span class="flex items-center space-x-2">
+          <span>🎙️</span>
+          <span>OpenAI Whisper 文字起こし設定</span>
+          <span id="whisperSummaryBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400">未設定</span>
+        </span>
+        <span id="whisperArrow" class="text-xs transition-transform transform duration-200">▼</span>
+      </button>
+
+      <div id="whisperSection" class="hidden p-4 border-t border-slate-800 space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">Whisper サーバー Base URL (OpenAI 互換)</label>
+          <input type="text" id="whisperBaseUrl" placeholder="例: http://192.168.11.x:8000 または https://api.openai.com" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-400 mb-1">モデル名</label>
+            <input type="text" id="whisperModel" value="whisper-1" placeholder="whisper-1, large-v3, tiny" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">言語コード</label>
+            <input type="text" id="whisperLanguage" value="ja" placeholder="ja" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">API キー (社内ローカル等で不要なら空欄)</label>
+          <div class="relative">
+            <input type="password" id="whisperApiKey" placeholder="sk-xxxxxxxxxxxxxxxxxxxx" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500 pr-16">
+            <button type="button" id="toggleWhisperKeyVisibility" class="absolute right-2 top-1.5 text-[11px] text-slate-400 hover:text-slate-200">表示</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">専門用語・ヒントプロンプト (任意)</label>
+          <input type="text" id="whisperPrompt" placeholder="例: 会議, アジェンダ, GitLab, .NET" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="flex items-center space-x-4 pt-1">
+          <label class="flex items-center space-x-1.5 cursor-pointer">
+            <input type="checkbox" id="whisperAutoTranscribe" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-slate-300">停止時に自動で文字起こしを実行</span>
+          </label>
+        </div>
+
+        <div class="flex space-x-2 pt-2">
+          <button id="testWhisperBtn" class="flex-1 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium transition">
+            🔍 接続テスト
+          </button>
+          <button id="saveWhisperBtn" class="flex-1 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition">
+            💾 設定を保存
+          </button>
+        </div>
+        <div id="whisperTestResult" class="text-[11px] min-h-[1rem] break-all"></div>
+      </div>
+    </div>
+
     <!-- 録画タイマー & カウンター -->
     <div class="bg-slate-950/60 rounded-xl p-4 border border-slate-800 flex items-center justify-around text-center">
       <div>
@@ -200,12 +256,28 @@ public static class IndexHtml
     const gitlabTestResult = document.getElementById('gitlabTestResult');
     const toggleTokenVisibility = document.getElementById('toggleTokenVisibility');
 
+    // Whisper 設定UI要素 (Phase 6)
+    const toggleWhisperBtn = document.getElementById('toggleWhisperBtn');
+    const whisperSection = document.getElementById('whisperSection');
+    const whisperArrow = document.getElementById('whisperArrow');
+    const whisperSummaryBadge = document.getElementById('whisperSummaryBadge');
+    const whisperBaseUrl = document.getElementById('whisperBaseUrl');
+    const whisperModel = document.getElementById('whisperModel');
+    const whisperLanguage = document.getElementById('whisperLanguage');
+    const whisperApiKey = document.getElementById('whisperApiKey');
+    const whisperPrompt = document.getElementById('whisperPrompt');
+    const whisperAutoTranscribe = document.getElementById('whisperAutoTranscribe');
+    const testWhisperBtn = document.getElementById('testWhisperBtn');
+    const saveWhisperBtn = document.getElementById('saveWhisperBtn');
+    const whisperTestResult = document.getElementById('whisperTestResult');
+    const toggleWhisperKeyVisibility = document.getElementById('toggleWhisperKeyVisibility');
+
     // 未送信スプール要素
     const pendingSpoolArea = document.getElementById('pendingSpoolArea');
     const pendingList = document.getElementById('pendingList');
     const refreshPendingBtn = document.getElementById('refreshPendingBtn');
 
-    // アコーディオン開閉
+    // GitLab アコーディオン開閉
     toggleConfigBtn.addEventListener('click', () => {
       const isHidden = configSection.classList.contains('hidden');
       if (isHidden) {
@@ -227,6 +299,28 @@ public static class IndexHtml
       }
     });
 
+    // Whisper アコーディオン開閉
+    toggleWhisperBtn.addEventListener('click', () => {
+      const isHidden = whisperSection.classList.contains('hidden');
+      if (isHidden) {
+        whisperSection.classList.remove('hidden');
+        whisperArrow.style.transform = 'rotate(180deg)';
+      } else {
+        whisperSection.classList.add('hidden');
+        whisperArrow.style.transform = 'rotate(0deg)';
+      }
+    });
+
+    toggleWhisperKeyVisibility.addEventListener('click', () => {
+      if (whisperApiKey.type === 'password') {
+        whisperApiKey.type = 'text';
+        toggleWhisperKeyVisibility.textContent = '伏せる';
+      } else {
+        whisperApiKey.type = 'password';
+        toggleWhisperKeyVisibility.textContent = '表示';
+      }
+    });
+
     function getGitLabConfigFromForm() {
       return {
         serverUrl: gitlabUrl.value.trim(),
@@ -239,6 +333,17 @@ public static class IndexHtml
       };
     }
 
+    function getWhisperConfigFromForm() {
+      return {
+        baseUrl: whisperBaseUrl.value.trim(),
+        apiKey: whisperApiKey.value.trim(),
+        model: whisperModel.value.trim() || 'whisper-1',
+        language: whisperLanguage.value.trim() || 'ja',
+        prompt: whisperPrompt.value.trim(),
+        autoTranscribeOnStop: whisperAutoTranscribe.checked
+      };
+    }
+
     function updateConfigBadge(config) {
       if (config && config.serverUrl && config.projectId && config.personalAccessToken) {
         configSummaryBadge.textContent = '設定済み ✓';
@@ -246,6 +351,16 @@ public static class IndexHtml
       } else {
         configSummaryBadge.textContent = '未設定';
         configSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400';
+      }
+    }
+
+    function updateWhisperBadge(config) {
+      if (config && config.baseUrl) {
+        whisperSummaryBadge.textContent = '設定済み ✓';
+        whisperSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-sky-900/60 text-sky-300 border border-sky-500/30';
+      } else {
+        whisperSummaryBadge.textContent = '未設定';
+        whisperSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400';
       }
     }
 
@@ -263,6 +378,15 @@ public static class IndexHtml
           gitlabIgnoreSsl.checked = gl.ignoreSslErrors ?? true;
           gitlabAutoUpload.checked = gl.autoUploadOnStop ?? true;
           updateConfigBadge(gl);
+
+          const wh = cfg.whisper || {};
+          whisperBaseUrl.value = wh.baseUrl || '';
+          whisperModel.value = wh.model || 'whisper-1';
+          whisperLanguage.value = wh.language || 'ja';
+          whisperApiKey.value = wh.apiKey || '';
+          whisperPrompt.value = wh.prompt || '';
+          whisperAutoTranscribe.checked = wh.autoTranscribeOnStop ?? true;
+          updateWhisperBadge(wh);
         }
       } catch (err) {
         console.warn('Config load error:', err);
@@ -270,29 +394,45 @@ public static class IndexHtml
     }
 
     async function saveConfig() {
-      const cfg = { gitLab: getGitLabConfigFromForm() };
+      const cfg = { 
+        gitLab: getGitLabConfigFromForm(),
+        whisper: getWhisperConfigFromForm()
+      };
       try {
         saveGitLabBtn.disabled = true;
+        saveWhisperBtn.disabled = true;
         saveGitLabBtn.textContent = '保存中...';
+        saveWhisperBtn.textContent = '保存中...';
+
         const res = await fetch('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(cfg)
         });
         if (res.ok) {
+          const msg = '✅ 設定を保存しました。';
           gitlabTestResult.className = 'text-[11px] text-emerald-400';
-          gitlabTestResult.textContent = '✅ 設定を保存しました。';
+          gitlabTestResult.textContent = msg;
+          whisperTestResult.className = 'text-[11px] text-emerald-400';
+          whisperTestResult.textContent = msg;
           updateConfigBadge(cfg.gitLab);
+          updateWhisperBadge(cfg.whisper);
         } else {
           gitlabTestResult.className = 'text-[11px] text-rose-400';
           gitlabTestResult.textContent = '設定保存に失敗しました。';
+          whisperTestResult.className = 'text-[11px] text-rose-400';
+          whisperTestResult.textContent = '設定保存に失敗しました。';
         }
       } catch (err) {
         gitlabTestResult.className = 'text-[11px] text-rose-400';
         gitlabTestResult.textContent = '保存例外: ' + err.message;
+        whisperTestResult.className = 'text-[11px] text-rose-400';
+        whisperTestResult.textContent = '保存例外: ' + err.message;
       } finally {
         saveGitLabBtn.disabled = false;
+        saveWhisperBtn.disabled = false;
         saveGitLabBtn.textContent = '💾 設定を保存';
+        saveWhisperBtn.textContent = '💾 設定を保存';
       }
     }
 
@@ -333,8 +473,48 @@ public static class IndexHtml
       }
     }
 
+    async function testWhisperConnection() {
+      const wh = getWhisperConfigFromForm();
+      if (!wh.baseUrl) {
+        whisperTestResult.className = 'text-[11px] text-amber-400';
+        whisperTestResult.textContent = 'Base URL を入力してください。';
+        return;
+      }
+
+      try {
+        testWhisperBtn.disabled = true;
+        testWhisperBtn.textContent = '接続テスト中...';
+        whisperTestResult.className = 'text-[11px] text-slate-400';
+        whisperTestResult.textContent = 'Whisper サーバーに疎通確認中...';
+
+        const res = await fetch('/api/whisper/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(wh)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          whisperTestResult.className = 'text-[11px] text-sky-400';
+          whisperTestResult.textContent = `✅ ${data.message}`;
+          updateWhisperBadge(wh);
+        } else {
+          whisperTestResult.className = 'text-[11px] text-rose-400';
+          whisperTestResult.textContent = `❌ 接続失敗: ${data.message || 'サーバー応答なし'}`;
+        }
+      } catch (err) {
+        whisperTestResult.className = 'text-[11px] text-rose-400';
+        whisperTestResult.textContent = `❌ 通信エラー: ${err.message}`;
+      } finally {
+        testWhisperBtn.disabled = false;
+        testWhisperBtn.textContent = '🔍 接続テスト';
+      }
+    }
+
     testGitLabBtn.addEventListener('click', testGitLabConnection);
     saveGitLabBtn.addEventListener('click', saveConfig);
+
+    testWhisperBtn.addEventListener('click', testWhisperConnection);
+    saveWhisperBtn.addEventListener('click', saveConfig);
 
     // 未送信スプール確認
     async function loadPendingSessions() {
@@ -347,14 +527,30 @@ public static class IndexHtml
             pendingList.innerHTML = '';
             sessions.forEach(s => {
               const div = document.createElement('div');
-              div.className = 'flex items-center justify-between bg-slate-900/60 p-2 rounded';
+              div.className = 'flex items-center justify-between bg-slate-900/60 p-2 rounded text-xs';
               const sizeMb = (s.totalSizeBytes / (1024 * 1024)).toFixed(1);
+
+              const audioBadge = s.hasMp3 
+                ? '<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/30">🎵 MP3</span>' 
+                : (s.hasAudio ? '<span class="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">🎙️ WAV</span>' : '');
+
+              const transcriptBadge = s.hasTranscript 
+                ? '<span class="text-[9px] px-1.5 py-0.2 rounded bg-sky-950 text-sky-400 border border-sky-500/30">📝 文字起こし済</span>' 
+                : '';
+
+              const transcribeBtn = !s.hasTranscript && (s.hasAudio || s.hasMp3)
+                ? `<button class="transcribe-session-btn px-2 py-0.5 rounded bg-sky-700 hover:bg-sky-600 text-white text-[10px] font-medium transition" data-id="${s.sessionId}">📝 文字起こし</button>`
+                : '';
+
               div.innerHTML = `
-                <div>
+                <div class="flex items-center space-x-1.5 flex-wrap">
                   <span class="font-mono text-white">${s.sessionId}</span>
-                  <span class="text-slate-400 text-[10px] ml-1">(${s.screenshotCount}枚, ${sizeMb} MB)</span>
+                  <span class="text-slate-400 text-[10px]">(${s.screenshotCount}枚, ${sizeMb}MB)</span>
+                  ${audioBadge}
+                  ${transcriptBadge}
                 </div>
                 <div class="flex items-center space-x-1.5">
+                  ${transcribeBtn}
                   <button class="upload-session-btn px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium" data-id="${s.sessionId}">
                     GitLabへ送信
                   </button>
@@ -364,6 +560,14 @@ public static class IndexHtml
                 </div>
               `;
               pendingList.appendChild(div);
+            });
+
+            // 手動文字起こしボタンのハンドラ登録
+            document.querySelectorAll('.transcribe-session-btn').forEach(btn => {
+              btn.addEventListener('click', async (e) => {
+                const sid = e.target.getAttribute('data-id');
+                await transcribeSingleSession(sid, e.target);
+              });
             });
 
             // 送信ボタンのハンドラ登録
@@ -388,6 +592,38 @@ public static class IndexHtml
           }
         }
       } catch { /* ignore */ }
+    }
+
+    async function transcribeSingleSession(sessionId, btnElement) {
+      if (btnElement) {
+        btnElement.disabled = true;
+        btnElement.textContent = '文字起こし中...';
+      }
+      logMessage.innerHTML = `<span class="text-sky-400 animate-pulse">🎙️ セッション ${sessionId} の Whisper 文字起こし実行中...</span>`;
+      try {
+        const res = await fetch('/api/whisper/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          logMessage.innerHTML = `<span class="text-sky-400 font-semibold">✅ 文字起こし完了！ (${data.segmentCount} セグメント, ${data.elapsedMilliseconds}ms)</span>`;
+          await loadPendingSessions();
+        } else {
+          logMessage.innerHTML = `<span class="text-rose-400">❌ 文字起こし失敗: ${data.message || 'エラー'}</span>`;
+          if (btnElement) {
+            btnElement.disabled = false;
+            btnElement.textContent = '再試行';
+          }
+        }
+      } catch (err) {
+        logMessage.innerHTML = `<span class="text-rose-400">❌ 文字起こし例外: ${err.message}</span>`;
+        if (btnElement) {
+          btnElement.disabled = false;
+          btnElement.textContent = '再試行';
+        }
+      }
     }
 
     async function uploadSingleSession(sessionId, btnElement) {
@@ -595,22 +831,32 @@ public static class IndexHtml
             btnIcon.className = 'inline-block w-4 h-4 rounded-full bg-white animate-pulse';
             screenshotCountDisplay.innerHTML = `${data.capturedCount || 0} <span class="text-xs font-normal text-slate-400">枚</span>`;
 
+            let extraMsg = '';
+            if (data.mp3Conversion && data.mp3Conversion.success) {
+              const mp3Kb = (data.mp3Conversion.compressedSizeBytes / 1024).toFixed(0);
+              const ratio = data.mp3Conversion.compressionRatioPercent.toFixed(0);
+              extraMsg += ` | 🎵 MP3: ${mp3Kb}KB (削減率 ${ratio}%)`;
+            }
+            if (data.whisperTranscription && data.whisperTranscription.success) {
+              extraMsg += ` | 📝 文字起こし: ${data.whisperTranscription.segmentCount}セグメント`;
+            }
+
             if (data.gitLabUpload) {
               const gu = data.gitLabUpload;
               if (gu.success) {
                 statusBadge.textContent = '送信完了';
                 statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
                 const link = gu.webUrl ? `<a href="${gu.webUrl}" target="_blank" class="underline text-indigo-400 font-semibold ml-1">コミットを開く ↗</a>` : '';
-                logMessage.innerHTML = `<span class="text-emerald-400 font-semibold">✅ GitLabへコミット完了！ ${link} (ローカル一時ファイルを自動削除しました)</span>`;
+                logMessage.innerHTML = `<span class="text-emerald-400 font-semibold">✅ GitLabへコミット完了！ ${link}${extraMsg} (ローカル一時ファイルを自動削除しました)</span>`;
               } else {
                 statusBadge.textContent = '送信失敗';
                 statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
-                logMessage.innerHTML = `<span class="text-rose-400">⚠️ GitLab送信失敗: ${gu.message} (ローカルに一時ファイルは安全に保持されています)</span>`;
+                logMessage.innerHTML = `<span class="text-rose-400">⚠️ GitLab送信失敗: ${gu.message}${extraMsg} (ローカルに一時ファイルは安全に保持されています)</span>`;
               }
             } else {
               statusBadge.textContent = '待機中';
               statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-              logMessage.textContent = `保存完了！ 音声: ${data.audioFile || 'なし'} / スクショ: ${data.capturedCount || 0}枚`;
+              logMessage.textContent = `保存完了！ スクショ: ${data.capturedCount || 0}枚${extraMsg}`;
             }
 
             await loadPendingSessions();

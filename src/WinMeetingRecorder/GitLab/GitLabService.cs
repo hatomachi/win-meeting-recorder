@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using WinMeetingRecorder.Config;
 using WinMeetingRecorder.Spool;
+using WinMeetingRecorder.Whisper;
 
 namespace WinMeetingRecorder.GitLab;
 
@@ -168,8 +169,21 @@ public class GitLabService
             var actions = new List<object>();
             long totalBytes = 0;
 
+            // transcript.json の読み込み (存在する場合)
+            WhisperTranscriptionResponse? transcriptData = null;
+            var transcriptPath = Path.Combine(sessionDir, "transcript.json");
+            if (File.Exists(transcriptPath))
+            {
+                try
+                {
+                    var transcriptJson = await File.ReadAllTextAsync(transcriptPath);
+                    transcriptData = JsonSerializer.Deserialize<WhisperTranscriptionResponse>(transcriptJson, JsonOptions);
+                }
+                catch { /* ignore */ }
+            }
+
             // 1. README.md の生成＆アクション追加
-            var readmeContent = GenerateReadmeMarkdown(sessionId, metadata, basePath);
+            var readmeContent = GenerateReadmeMarkdown(sessionId, metadata, basePath, transcriptData);
             var readmeBytes = Encoding.UTF8.GetBytes(readmeContent);
             totalBytes += readmeBytes.Length;
             actions.Add(new
@@ -180,22 +194,53 @@ public class GitLabService
                 encoding = "text"
             });
 
-            // 2. 音声ファイル (meeting_audio.wav) の追加
-            var audioPath = Path.Combine(sessionDir, "meeting_audio.wav");
-            if (File.Exists(audioPath))
+            // 2. 音声ファイルの追加 (軽量MP3を最優先、なければWAV)
+            var mp3Path = Path.Combine(sessionDir, "meeting_audio.mp3");
+            var wavPath = Path.Combine(sessionDir, "meeting_audio.wav");
+
+            if (File.Exists(mp3Path))
             {
-                var audioBytes = await File.ReadAllBytesAsync(audioPath);
-                totalBytes += audioBytes.Length;
+                var mp3Bytes = await File.ReadAllBytesAsync(mp3Path);
+                totalBytes += mp3Bytes.Length;
+                actions.Add(new
+                {
+                    action = "create",
+                    file_path = $"{basePath}/meeting_audio.mp3",
+                    content = Convert.ToBase64String(mp3Bytes),
+                    encoding = "base64"
+                });
+                Console.WriteLine($"[GitLabService] 🎵 軽量MP3音声をコミットに追加: {mp3Bytes.Length / 1024.0:F1} KB");
+            }
+            else if (File.Exists(wavPath))
+            {
+                var wavBytes = await File.ReadAllBytesAsync(wavPath);
+                totalBytes += wavBytes.Length;
                 actions.Add(new
                 {
                     action = "create",
                     file_path = $"{basePath}/meeting_audio.wav",
-                    content = Convert.ToBase64String(audioBytes),
+                    content = Convert.ToBase64String(wavBytes),
                     encoding = "base64"
                 });
+                Console.WriteLine($"[GitLabService] 🎙️ WAV音声をコミットに追加: {wavBytes.Length / 1024.0:F1} KB");
             }
 
-            // 3. スクリーンショット画像 (images/*.jpg) の追加
+            // 3. transcript.json の追加 (文字起こし結果)
+            if (File.Exists(transcriptPath))
+            {
+                var tBytes = await File.ReadAllBytesAsync(transcriptPath);
+                totalBytes += tBytes.Length;
+                actions.Add(new
+                {
+                    action = "create",
+                    file_path = $"{basePath}/transcript.json",
+                    content = Convert.ToBase64String(tBytes),
+                    encoding = "base64"
+                });
+                Console.WriteLine($"[GitLabService] 📝 文字起こし transcript.json をコミットに追加");
+            }
+
+            // 4. スクリーンショット画像 (images/*.jpg) の追加
             var imagesDir = Path.Combine(sessionDir, "images");
             int imageCount = 0;
             if (Directory.Exists(imagesDir))
@@ -217,8 +262,11 @@ public class GitLabService
                 }
             }
 
-            // 4. Commits API ペイロード構築
-            var commitMessage = $"docs(meeting): 会議記録 {sessionId} (音声 + スクショ {imageCount}枚)";
+            // 5. Commits API ペイロード構築
+            string commitTitleSuffix = "";
+            if (File.Exists(mp3Path)) commitTitleSuffix += " [MP3]";
+            if (transcriptData != null) commitTitleSuffix += " [文字起こし済]";
+            var commitMessage = $"docs(meeting): 会議記録 {sessionId} (音声 + スクショ {imageCount}枚{commitTitleSuffix})";
             var payload = new
             {
                 branch = branch,
@@ -298,8 +346,13 @@ public class GitLabService
 
     /// <summary>
     /// セッション情報から GitLab 閲覧用 README.md を生成します
+    /// 文字起こし結果 (Whisper) がある場合は、発話とスライド画像を同期させた統合タイムラインを出力します
     /// </summary>
-    public static string GenerateReadmeMarkdown(string sessionId, MeetingSessionMetadata? metadata, string basePath)
+    public static string GenerateReadmeMarkdown(
+        string sessionId, 
+        MeetingSessionMetadata? metadata, 
+        string basePath, 
+        WhisperTranscriptionResponse? transcript = null)
     {
         var sb = new StringBuilder();
         var titleTime = metadata != null && metadata.StartTime != default 
@@ -330,15 +383,102 @@ public class GitLabService
             }
         }
 
-        sb.AppendLine($"- **音声ファイル**: [meeting_audio.wav](./meeting_audio.wav) (48kHz ステレオ / WASAPI Loopback ＋ マイク合成)");
+        // 音声ファイルリンク
+        if (metadata != null && metadata.HasMp3)
+        {
+            sb.AppendLine($"- **音声ファイル**: [meeting_audio.mp3](./meeting_audio.mp3) 🎵 (24kHz モノラル高圧縮 MP3)");
+        }
+        else
+        {
+            sb.AppendLine($"- **音声ファイル**: [meeting_audio.wav](./meeting_audio.wav) (48kHz ステレオ WAV)");
+        }
+
         var imgCount = metadata?.Images.Count ?? 0;
         sb.AppendLine($"- **画面キャプチャ**: {imgCount} 枚");
+
+        if (transcript != null && transcript.Segments.Count > 0)
+        {
+            sb.AppendLine($"- **文字起こし**: 完了 ({transcript.Segments.Count} 件の発話セグメント, 全 {transcript.Text.Length} 文字) [transcript.json](./transcript.json)");
+        }
         sb.AppendLine();
+
+        // 文字起こし全文アコーディオン
+        if (transcript != null && !string.IsNullOrWhiteSpace(transcript.Text))
+        {
+            sb.AppendLine("<details>");
+            sb.AppendLine($"<summary>📜 <strong>文字起こし全文テキストを展開 ({transcript.Text.Length} 文字)</strong></summary>");
+            sb.AppendLine();
+            sb.AppendLine($"> {transcript.Text.Trim()}");
+            sb.AppendLine();
+            sb.AppendLine("</details>");
+            sb.AppendLine();
+        }
 
         sb.AppendLine("---");
         sb.AppendLine();
-        sb.AppendLine("## 📸 タイムライン・画面キャプチャ一覧");
-        sb.AppendLine();
+
+        // タイムラインの構築 (文字起こしセグメント ＋ スクリーンショット画像の時系列マージ)
+        if (transcript != null && transcript.Segments.Count > 0)
+        {
+            sb.AppendLine("## 📝 会議タイムライン（発話書き起こし ＆ スライド画像）");
+            sb.AppendLine();
+            sb.AppendLine("| 経過時間 | 種別 | 発話内容 / スライド画像プレビュー |");
+            sb.AppendLine("| :---: | :---: | :--- |");
+
+            var timelineItems = new List<TimelineItem>();
+
+            // 1. スクショ画像の登録
+            if (metadata != null)
+            {
+                foreach (var img in metadata.Images)
+                {
+                    string reasonText = img.Reason switch
+                    {
+                        "initial" => "初回キーフレーム",
+                        "manual" => "手動撮影 📸",
+                        "diff" => $"スライド変化検知 ({img.Diff * 100:F1}%)",
+                        "timer" => "定期キーフレーム",
+                        _ => img.Reason
+                    };
+
+                    var imgRel = $"./images/{img.FileName}";
+                    var previewMd = $"[![{reasonText}]({imgRel})]({imgRel})<br>*{reasonText}*";
+
+                    timelineItems.Add(new TimelineItem(
+                        SortTime: img.ElapsedSeconds,
+                        TimeDisplay: FormatSeconds(img.ElapsedSeconds),
+                        Type: "📸 スライド",
+                        Content: previewMd));
+                }
+            }
+
+            // 2. 文字起こしセグメントの登録
+            foreach (var seg in transcript.Segments)
+            {
+                var timeRange = $"{FormatSeconds((int)seg.Start)} - {FormatSeconds((int)seg.End)}";
+                timelineItems.Add(new TimelineItem(
+                    SortTime: seg.Start,
+                    TimeDisplay: timeRange,
+                    Type: "🗣️ 発話",
+                    Content: EscapeMarkdownTableCell(seg.Text.Trim())));
+            }
+
+            // 時系列昇順ソート (同時刻ならスライド画像を先に表示)
+            var sorted = timelineItems
+                .OrderBy(x => x.SortTime)
+                .ThenBy(x => x.Type.StartsWith("📸") ? 0 : 1)
+                .ToList();
+
+            foreach (var item in sorted)
+            {
+                sb.AppendLine($"| `{item.TimeDisplay}` | {item.Type} | {item.Content} |");
+            }
+        }
+        else
+        {
+            // 文字起こしなし: 従来の画面キャプチャ一覧
+            sb.AppendLine("## 📸 タイムライン・画面キャプチャ一覧");
+            sb.AppendLine();
 
         if (metadata == null || metadata.Images.Count == 0)
         {
@@ -368,6 +508,7 @@ public class GitLabService
                 sb.AppendLine($"| `{timeStr}` | {timeClock} | {reasonText} | [![{timeStr}]({imgRel})]({imgRel}) |");
             }
         }
+        }
 
         sb.AppendLine();
         sb.AppendLine("---");
@@ -375,4 +516,17 @@ public class GitLabService
 
         return sb.ToString();
     }
+
+    private static string FormatSeconds(double totalSeconds)
+    {
+        var ts = TimeSpan.FromSeconds(Math.Max(0, totalSeconds));
+        return $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+    }
+
+    private static string EscapeMarkdownTableCell(string text)
+    {
+        return text.Replace("|", "\\|").Replace("\r\n", "<br>").Replace("\n", "<br>");
+    }
+
+    private record TimelineItem(double SortTime, string TimeDisplay, string Type, string Content);
 }

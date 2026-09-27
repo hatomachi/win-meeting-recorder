@@ -16,10 +16,10 @@ scp -r src/WinMeetingRecorder $WIN_HOST:C:/work/src/
 scp README_HOW_TO_USE.txt $WIN_HOST:C:/work/
 
 echo "🔨 [2/3] Windows 実機上でローカル高速ビルド中 (dotnet publish)..."
-ssh $WIN_HOST "C:\dotnet\dotnet.exe publish C:\work\src\WinMeetingRecorder\WinMeetingRecorder.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o C:\work"
+ssh $WIN_HOST "Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; C:\dotnet\dotnet.exe publish C:\work\src\WinMeetingRecorder\WinMeetingRecorder.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o C:\work"
 
-echo "🔄 [3/3] 実行中プロセスを停止し、新バイナリを対話セッションで再起動中..."
-ssh $WIN_HOST "Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; schtasks /create /tn 'StartRecorder' /tr 'C:\work\WinMeetingRecorder.exe --no-browser' /sc once /st '23:59' /ru 'sohik' /it /f; schtasks /run /tn 'StartRecorder'; Start-Sleep -Seconds 3; schtasks /delete /tn 'StartRecorder' /f"
+echo "🔄 [3/3] 新バイナリを対話セッションで再起動中..."
+ssh $WIN_HOST "schtasks /create /tn 'StartRecorder' /tr 'C:\work\WinMeetingRecorder.exe --no-browser' /sc once /st '23:59' /ru 'sohik' /it /f; schtasks /run /tn 'StartRecorder'; Start-Sleep -Seconds 3; schtasks /delete /tn 'StartRecorder' /f"
 
 echo "✅ デプロイ完了！"
 echo "Web UI URL: http://192.168.11.19:5000"
