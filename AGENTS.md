@@ -71,23 +71,17 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
     - CLI検証モード（`--list-screens`, `--test-screen`）の追加
     - Web UI 連携（モニタ選択、リアルタイム撮影枚数カウンター、手動即時スクショボタン、音声＋画面同時記録）
     - **実機検証完了**: SSH経由で自動配置し、物理画面（1536x960、フル解像度JPEG 192KB）の撮影・Mac転送・目視確認に成功！
-- **次に着手するタスク（Phase 4: 社内GitLab REST API 連携 ＆ 自動クリーンアップ）**:
-  - ユーザーから「続きをやって」と指示された場合は、直ちにこの **Phase 4** の実装に着手してください。
-  - **実装内容**:
-    1. **GitLab REST API クライアント (`GitLabService.cs`)**:
-       - 社内GitLab（Self-hosted GitLab）の Commits API (`POST /api/v4/projects/:id/repository/commits`) を用いた一括ファイルコミット
-       - アクション一覧:
-         - `meeting_audio.wav` (Base64エンコード)
-         - `images/*.jpg` (Base64エンコード)
-         - `README.md` (会議情報、スクショ一覧、タイムスタンプリンクを記載したMarkdown)
-    2. **スプール自動クリーンアップ**:
-       - GitLab へのコミット成功を確認後、ローカルの一時フォルダ（`%AppData%\WinMeetingRecorder\spool\<timestamp>`）を安全に全削除し、PC容量ゼロを維持
-       - 送信失敗時は削除せずローカルに残してエラー表示（データ消失防止）
-    3. **Web UI 連携**:
-       - GitLab設定（Base URL, Project ID, PAT, 保存先パス）の入力・保存UI（`localStorage` 保持）
-       - 記録停止時の「GitLabへアップロード中...」ステータス表示
-    4. **LAN内バインド対応**:
-       - `app.Run("http://0.0.0.0:5000")` に変更し、Macのブラウザ（`http://192.168.11.19:5000`）からも直接アクセス・操作できるようにする
+  - **Phase 4 (社内GitLab REST API 連携 ＆ 自動クリーンアップ ＆ LANバインド)**:
+    - 社内GitLab（Self-hosted）の Commits API (`POST /api/v4/projects/:id/repository/commits`) によるアトミック一括ファイルコミット (`README.md`, `meeting_audio.wav`, `images/*.jpg`)
+    - 社内GitLab用の自己署名SSL許可（`IgnoreSslErrors`）およびURLエスケープ
+    - スプールマネージャー (`SpoolService.cs`) による `metadata.json` 保持、未送信セッション一覧取得、コミット成功時のスプール完全自動消去（失敗時は安全保持）
+    - Web UI 連携（GitLab設定アコーディオン、接続テスト、自動プッシュ、手動アップロード、未送信通知）
+    - LAN内バインド（`0.0.0.0:5000`）対応により、同一LAN内のMacブラウザ（`http://192.168.11.19:5000`）から直接全操作盤を遠隔操作可能に！
+    - **実機検証完了**: Macから `http://192.168.11.19:5000` 経由で記録開始・手動スクショ・停止・Commits API送信検証を実施し、音声2.28MB＋スクショ2枚＋metadata.jsonの生成と失敗時スプール安全保持を確認完了！
+- **次に着手するタスク（Phase 5: 単一exe最適化 ＆ エンドツーエンド総合検証）**:
+  - 実機での連続稼働テスト（長時間の安定性確認）
+  - exeファイルサイズ最適化・配布パッケージングの総仕上げ
+  - セルフホストWhisper等の将来構想に向けた拡張性の確認
 
 ---
 
