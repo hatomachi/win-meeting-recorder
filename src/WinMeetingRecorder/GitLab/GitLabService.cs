@@ -85,30 +85,43 @@ public class GitLabService
             var response = await client.GetAsync(url);
             var body = await response.Content.ReadAsStringAsync();
 
-            if (!response.IsSuccessStatusCode)
+            if (response.IsSuccessStatusCode)
             {
-                return new GitLabTestResult(false, 
-                    $"GitLab接続エラー (HTTP {(int)response.StatusCode} {response.ReasonPhrase}): {body}");
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                var projectName = root.TryGetProperty("name_with_namespace", out var nameProp) 
+                    ? nameProp.GetString() 
+                    : config.ProjectId;
+                var defaultBranch = root.TryGetProperty("default_branch", out var branchProp) 
+                    ? branchProp.GetString() 
+                    : "main";
+                var webUrl = root.TryGetProperty("web_url", out var webUrlProp) 
+                    ? webUrlProp.GetString() 
+                    : null;
+
+                return new GitLabTestResult(
+                    true, 
+                    $"接続成功: プロジェクト '{projectName}' にアクセスできました。", 
+                    projectName, 
+                    defaultBranch, 
+                    webUrl);
             }
 
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            var projectName = root.TryGetProperty("name_with_namespace", out var nameProp) 
-                ? nameProp.GetString() 
-                : config.ProjectId;
-            var defaultBranch = root.TryGetProperty("default_branch", out var branchProp) 
-                ? branchProp.GetString() 
-                : "main";
-            var webUrl = root.TryGetProperty("web_url", out var webUrlProp) 
-                ? webUrlProp.GetString() 
-                : null;
+            // フォールバック: Fine-grained PATで「Project: Read」がない場合、リポジトリAPIを直接検証
+            var repoUrl = $"api/v4/projects/{escapedProjectId}/repository/commits?per_page=1";
+            var repoResponse = await client.GetAsync(repoUrl);
+            if (repoResponse.IsSuccessStatusCode)
+            {
+                return new GitLabTestResult(
+                    true,
+                    $"接続成功: リポジトリ '{config.ProjectId}' へのアクセス権限を確認しました。",
+                    config.ProjectId,
+                    config.Branch,
+                    $"{config.ServerUrl.TrimEnd('/')}/{config.ProjectId}");
+            }
 
-            return new GitLabTestResult(
-                true, 
-                $"接続成功: プロジェクト '{projectName}' にアクセスできました。", 
-                projectName, 
-                defaultBranch, 
-                webUrl);
+            return new GitLabTestResult(false, 
+                $"GitLab接続エラー (HTTP {(int)response.StatusCode} {response.ReasonPhrase}): {body}");
         }
         catch (Exception ex)
         {
