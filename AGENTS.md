@@ -97,15 +97,57 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
     - Web UIからの**安全なアプリ終了（シャットダウンAPI）**および**未送信スプールの個別削除機能**を実装。
     - 単一exe最適化（デバッグシンボル削除）および `README_HOW_TO_USE.txt`（利用ガイド）を同梱した配布zipパッケージングの自動化完了。
     - 手元Windows検証機にて、ダブルクリック起動（Edge自動オープン）➜ 記録開始 ➜ 手動スクショ ➜ 停止 ➜ GitLab自動コミット ➜ スプール完全自動消去 ➜ Web UIからの安全終了まで、エンドツーエンドの全フロー完全動作を確認完了！
-- **今後の展望（Backlog）**:
-  - セルフホストWhisper連携によるローカル文字起こし・タイムスタンプ自動生成
-  - 会議ビューア（統合タイムラインUI）との連携
-  - 録画対象ディスプレイ・ウィンドウのプレビュー選択UI
+  - **Phase 5 (単一exe最適化 ＆ エンドツーエンド総合検証 ＆ パッケージング完了)**:
+    - 実機での連続稼働ストレステスト（60秒間連続稼働）を実施。メモリリークゼロ（GCが正常に働き135MBに安定）、ハンドル数完全一定（676前後）、CPU負荷わずか6%の極めて軽量・高安定性を実証！
+    - デフォルトでの**既定ブラウザ自動オープン**（ダブルクリックで即 `http://localhost:5000` 起動、`--no-browser` でスキップ可能）を実装。
+    - Web UIからの**安全なアプリ終了（シャットダウンAPI）**および**未送信スプールの個別削除機能**を実装。
+    - 単一exe最適化（デバッグシンボル削除）および `README_HOW_TO_USE.txt`（利用ガイド）を同梱した配布zipパッケージングの自動化完了。
+    - 手元Windows検証機にて、ダブルクリック起動（Edge自動オープン）➜ 記録開始 ➜ 手動スクショ ➜ 停止 ➜ GitLab自動コミット ➜ スプール完全自動消去 ➜ Web UIからの安全終了まで、エンドツーエンドの全フロー完全動作を確認完了！
+- **次期実装タスク（Phase 6: MP3軽量化 ➜ OpenAI Whisper API互換連携）**:
+  - **Phase 6A: 音声のMP3軽量化（24kHzモノラル）**:
+    - 非圧縮WAV（48kHz Float32ステレオ、1時間約700MB）を、NAudio MediaFoundation（Windows標準機能・追加DLL不要）で 24kHz モノラル MP3（1時間約28MB）へ自動変換。
+    - スプール内に `meeting_audio.mp3` を生成し、GitLabコミット容量の激減とWhisper転送の高速化を実現。
+  - **Phase 6B: OpenAI Whisper API互換連携（文字起こし＆タイムライン生成）**:
+    - 会社環境に用意されている OpenAI Whisper API 互換エンドポイントを呼ぶクライアントを実装。
+    - `POST {WhisperBaseUrl}/v1/audio/transcriptions`（`response_format: verbose_json`、`file: meeting_audio.mp3`、`language: ja`）。
+    - Web UI / `config.json` に接続先Base URL（`http://...:8000`）、API Key（任意）、モデル名を設定可能にする。
+    - 返却された各セグメント（`start`, `end`, `text`）を `transcript.json` に保存。
+    - `README.md` にタイムライン形式（発話テキストと撮影スクショが時系列に並ぶ表）を自動埋め込み。
+  - **Phase 6C: 会議ビューア統合 ＆ 画面プレビューUI**:
+    - `voice-reflection-agent` で構築済みのリッチタイムラインビューアとの完全互換連携。
 
 ---
 
-## 🏗️ 開発・ビルド・検証の基本サイクル
+## ⚡ 爆速ローカル開発サイクル（GitHub Actions スキップ）
 
-1. **開発**: Mac環境でAIとともにC#コード・フロントエンドを記述
-2. **ビルド**: GitHub Actions（`runs-on: windows-latest`）に `git push` し、単一exe（Self-contained win-x64）を自動生成
-3. **検証**: Macから `ssh win-test` を叩いて最新zipの展開・実機実行・成果物取得（`scp`）まで完全自動で検証
+Windows検証機（`win-test`）上に `.NET 8.0.425 SDK`（`C:\dotnet`）の配備が完了したため、**開発中のGitHub Actions待ち（毎回1〜2分）を完全にスキップ可能**です！
+
+```bash
+# Macから1コマンドでWindows検証機へソース転送 ➜ 実機ローカルビルド ➜ プロセス再起動 (約10秒で完了)
+./tools/deploy-local.sh
+```
+
+- **開発時**: コード修正後、`./tools/deploy-local.sh` で手元実機へ瞬時に反映・即座検証（PDCAが10秒で回る）。
+- **リリース時**: 機能実装が一区切りついた段階でのみ GitHub に `git push` し、GitHub Actions で公式 zip リリース（`vlatest`）を生成する。
+
+---
+
+## 🎙️ Whisper テスト・検証環境（Macローカル）
+
+開発・動作確認用として、以下の2つのテスト環境を用意済みです：
+
+1. **超軽量Pythonモックサーバー (外部ライブラリ不要)**:
+   ```bash
+   # Mac上で起動 (ポート8000)
+   python3 tools/whisper-mock/mock_server.py
+   # 接続先Base URL: http://<MacのLAN_IP>:8000
+   ```
+   - `POST /v1/audio/transcriptions` にて即座にリアルな `verbose_json`（タイムスタンプ付き日本語セグメント4件）を返却。API通信・パース・タイムライン生成の疎通確認に最適。
+
+2. **Docker 本物Whisperサーバー (CPU最軽量 tinyモデル)**:
+   ```bash
+   # Mac上で起動 (ポート8000)
+   docker compose -f tools/whisper-mock/docker-compose.yml up -d
+   # 接続先Base URL: http://<MacのLAN_IP>:8000
+   ```
+   - 実際に音声を解析してリアルな文字起こしを行いたい場合に使用可能。

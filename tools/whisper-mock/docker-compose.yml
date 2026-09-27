@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: whisper-local-cpu
+    ports:
+      - "8000:8000"
+    environment:
+      - WHISPER_MODEL=Systran/faster-whisper-tiny
+      - WHISPER_DEVICE=cpu
+      - WHISPER_COMPUTE_TYPE=int8
+    restart: unless-stopped
