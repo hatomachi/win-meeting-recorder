@@ -1,9 +1,25 @@
+using System.Net;
+using System.Net.Sockets;
 using NAudio.Wave;
 using WinMeetingRecorder.Audio;
+using WinMeetingRecorder.Config;
+using WinMeetingRecorder.GitLab;
 using WinMeetingRecorder.Screen;
+using WinMeetingRecorder.Spool;
 using WinMeetingRecorder.Ui;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// DI コンテナ登録
+builder.Services.AddSingleton<ConfigService>();
+builder.Services.AddSingleton<SpoolService>();
+builder.Services.AddSingleton<GitLabService>();
+builder.Services.AddSingleton<AudioEngine>();
+builder.Services.AddSingleton<ScreenCaptureEngine>();
+
+// アクティブセッション管理 (メモリ保持)
+ActiveSessionState? activeSession = null;
+var sessionLock = new object();
 
 // CLIモード判定
 if (args.Length > 0)
@@ -195,17 +211,72 @@ if (args.Length > 0)
         return;
     }
 
+    if (command == "--test-gitlab")
+    {
+        var configService = new ConfigService();
+        var gitLabService = new GitLabService();
+        var config = configService.LoadConfig().GitLab;
+
+        if (args.Length > 3)
+        {
+            config.ServerUrl = args[1];
+            config.ProjectId = args[2];
+            config.PersonalAccessToken = args[3];
+        }
+
+        Console.WriteLine("========================================");
+        Console.WriteLine(" 🦊 GitLab API 接続テスト (Phase 4)");
+        Console.WriteLine("========================================");
+        Console.WriteLine($"URL: {config.ServerUrl}");
+        Console.WriteLine($"Project: {config.ProjectId}");
+        Console.WriteLine($"Token: {(string.IsNullOrEmpty(config.PersonalAccessToken) ? "(未設定)" : "******")}");
+        Console.WriteLine("----------------------------------------");
+
+        var testResult = gitLabService.TestConnectionAsync(config).GetAwaiter().GetResult();
+        if (testResult.Success)
+        {
+            Console.WriteLine($"✅ {testResult.Message}");
+            Console.WriteLine($"   プロジェクト名: {testResult.ProjectName}");
+            Console.WriteLine($"   デフォルトブランチ: {testResult.DefaultBranch}");
+            Console.WriteLine($"   WebURL: {testResult.WebUrl}");
+        }
+        else
+        {
+            Console.WriteLine($"❌ {testResult.Message}");
+        }
+        Console.WriteLine("========================================");
+        return;
+    }
+
+    if (command == "--pending-spool")
+    {
+        var spool = new SpoolService();
+        var pendings = spool.GetPendingSessions();
+        Console.WriteLine("========================================");
+        Console.WriteLine($" 📁 保管中の未送信スプール一覧 ({pendings.Count} 件)");
+        Console.WriteLine("========================================");
+        foreach (var p in pendings)
+        {
+            Console.WriteLine($"  [{p.SessionId}] {p.CreatedAt:yyyy-MM-dd HH:mm:ss} | スクショ: {p.ScreenshotCount}枚 | 音声: {(p.HasAudio ? "あり" : "なし")} | サイズ: {p.TotalSizeBytes / (1024.0 * 1024.0):F1} MB");
+            Console.WriteLine($"      パス: {p.DirectoryPath}");
+        }
+        Console.WriteLine("========================================");
+        return;
+    }
+
     if (command == "--help" || command == "-h")
     {
         Console.WriteLine("========================================");
         Console.WriteLine(" 🎙️ WinMeetingRecorder ヘルプ");
         Console.WriteLine("========================================");
-        Console.WriteLine("引数なしで実行すると、Web UI (http://localhost:5000) が起動します。\n");
+        Console.WriteLine("引数なしで実行すると、Web UI (http://0.0.0.0:5000) が起動します。\n");
         Console.WriteLine("CLIコマンド一覧:");
         Console.WriteLine("  --list-devices, -l             : オーディオ入出力デバイス一覧を表示");
         Console.WriteLine("  --list-screens, -ls            : ディスプレイ一覧を表示");
         Console.WriteLine("  --test-audio, -t [秒数] [出力パス] : 音声合成（相手の声＋マイク）テスト録音");
         Console.WriteLine("  --test-screen, -ts [秒数] [モニタIndex] [出力先] : 画面変化検知スクショテスト");
+        Console.WriteLine("  --test-gitlab [URL] [Project] [PAT] : GitLab REST API 接続テスト");
+        Console.WriteLine("  --pending-spool                : ローカルスプールに残っている未送信一覧");
         Console.WriteLine("  --help, -h                     : このヘルプを表示");
         Console.WriteLine("========================================");
         return;
@@ -215,10 +286,22 @@ if (args.Length > 0)
 // ==========================================
 // ASP.NET Core Minimal API サーバー (Web UI)
 // ==========================================
-builder.Services.AddSingleton<AudioEngine>();
-builder.Services.AddSingleton<ScreenCaptureEngine>();
-
 var app = builder.Build();
+
+// スクショ撮影イベントの自動ハンドリング (スプールメタデータへの追記)
+var screenCaptureEngine = app.Services.GetRequiredService<ScreenCaptureEngine>();
+var spoolService = app.Services.GetRequiredService<SpoolService>();
+
+screenCaptureEngine.OnCaptured += (evt) =>
+{
+    lock (sessionLock)
+    {
+        if (activeSession != null)
+        {
+            spoolService.RecordImageCaptured(activeSession.SessionId, evt);
+        }
+    }
+};
 
 // 静的ファイル配信 (フォールバック用)
 app.UseDefaultFiles();
@@ -227,6 +310,26 @@ app.UseStaticFiles();
 // Web UI: 単一exe内蔵HTML配信 (404防止・単一exeポータブル対応)
 app.MapGet("/", () => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
 app.MapGet("/index.html", () => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
+
+// API: 設定の取得
+app.MapGet("/api/config", (ConfigService configService) =>
+{
+    return Results.Ok(configService.LoadConfig());
+});
+
+// API: 設定の保存
+app.MapPost("/api/config", (ConfigService configService, AppConfig newConfig) =>
+{
+    configService.SaveConfig(newConfig);
+    return Results.Ok(new { message = "設定を保存しました。" });
+});
+
+// API: GitLab 接続テスト
+app.MapPost("/api/gitlab/test", async (GitLabService gitLabService, GitLabConfig config) =>
+{
+    var result = await gitLabService.TestConnectionAsync(config);
+    return Results.Ok(result);
+});
 
 // API: デバイス一覧取得
 app.MapGet("/api/devices", () =>
@@ -251,66 +354,82 @@ app.MapGet("/api/screens", () =>
 // API: 状態取得
 app.MapGet("/api/status", (AudioEngine audioEngine, ScreenCaptureEngine screenEngine) =>
 {
-    return Results.Ok(new
+    lock (sessionLock)
     {
-        isRecording = audioEngine.IsRecording,
-        currentFile = audioEngine.CurrentOutputFile,
-        isCapturing = screenEngine.IsCapturing,
-        capturedCount = screenEngine.CapturedCount,
-        targetScreen = screenEngine.TargetScreen
-    });
+        return Results.Ok(new
+        {
+            isRecording = audioEngine.IsRecording,
+            sessionId = activeSession?.SessionId,
+            currentFile = audioEngine.CurrentOutputFile,
+            isCapturing = screenEngine.IsCapturing,
+            capturedCount = screenEngine.CapturedCount,
+            targetScreen = screenEngine.TargetScreen
+        });
+    }
 });
 
 // API: 録音・画面キャプチャ開始
-app.MapPost("/api/record/start", (AudioEngine audioEngine, ScreenCaptureEngine screenEngine, RecordStartRequest? req) =>
+app.MapPost("/api/record/start", (
+    AudioEngine audioEngine, 
+    ScreenCaptureEngine screenEngine, 
+    SpoolService spool,
+    RecordStartRequest? req) =>
 {
-    if (audioEngine.IsRecording || screenEngine.IsCapturing)
+    lock (sessionLock)
     {
-        return Results.BadRequest(new { error = "既に記録中です。" });
-    }
-
-    var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-    var spoolDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "WinMeetingRecorder", "spool", timestamp);
-    var outputPath = Path.Combine(spoolDir, "meeting_audio.wav");
-
-    try
-    {
-        // 1. 音声録音開始
-        audioEngine.StartRecording(outputPath, req?.PlaybackDeviceId, req?.CaptureDeviceId);
-
-        // 2. 画面キャプチャ開始 (デフォルト有効)
-        bool enableScreen = req?.EnableScreenCapture ?? true;
-        if (enableScreen)
+        if (audioEngine.IsRecording || screenEngine.IsCapturing)
         {
-            var options = new ScreenCaptureOptions
+            return Results.BadRequest(new { error = "既に記録中です。" });
+        }
+
+        int monitorIdx = req?.MonitorIndex ?? 0;
+        var screenInfo = ScreenService.ResolveScreen(monitorIdx);
+
+        // スプールディレクトリとメタデータの初期化
+        var session = spool.CreateSession(monitorIdx, screenInfo.Name);
+        activeSession = new ActiveSessionState(session.SessionId, session.SpoolDirectory);
+
+        var outputPath = Path.Combine(session.SpoolDirectory, "meeting_audio.wav");
+
+        try
+        {
+            // 1. 音声録音開始
+            audioEngine.StartRecording(outputPath, req?.PlaybackDeviceId, req?.CaptureDeviceId);
+
+            // 2. 画面キャプチャ開始 (デフォルト有効)
+            bool enableScreen = req?.EnableScreenCapture ?? true;
+            if (enableScreen)
             {
-                MonitorIndex = req?.MonitorIndex ?? 0
-            };
-            screenEngine.StartCapture(spoolDir, options);
-        }
+                var options = new ScreenCaptureOptions
+                {
+                    MonitorIndex = monitorIdx
+                };
+                screenEngine.StartCapture(session.SpoolDirectory, options);
+            }
 
-        return Results.Ok(new
-        {
-            message = "記録を開始しました。",
-            sessionDir = spoolDir,
-            audioPath = outputPath,
-            screenCaptureEnabled = enableScreen
-        });
-    }
-    catch (Exception ex)
-    {
-        // ロールバック
-        if (audioEngine.IsRecording)
-        {
-            audioEngine.StopRecordingAsync().GetAwaiter().GetResult();
+            return Results.Ok(new
+            {
+                message = "記録を開始しました。",
+                sessionId = session.SessionId,
+                sessionDir = session.SpoolDirectory,
+                audioPath = outputPath,
+                screenCaptureEnabled = enableScreen
+            });
         }
-        if (screenEngine.IsCapturing)
+        catch (Exception ex)
         {
-            screenEngine.StopCaptureAsync().GetAwaiter().GetResult();
+            // ロールバック
+            if (audioEngine.IsRecording)
+            {
+                audioEngine.StopRecordingAsync().GetAwaiter().GetResult();
+            }
+            if (screenEngine.IsCapturing)
+            {
+                screenEngine.StopCaptureAsync().GetAwaiter().GetResult();
+            }
+            activeSession = null;
+            return Results.Problem($"記録開始に失敗しました: {ex.Message}");
         }
-        return Results.Problem($"記録開始に失敗しました: {ex.Message}");
     }
 });
 
@@ -330,12 +449,27 @@ app.MapPost("/api/record/screenshot", (ScreenCaptureEngine screenEngine) =>
     });
 });
 
-// API: 録音・画面キャプチャ停止
-app.MapPost("/api/record/stop", async (AudioEngine audioEngine, ScreenCaptureEngine screenEngine) =>
+// API: 録音・画面キャプチャ停止 ＆ (任意) GitLab 自動アップロード
+app.MapPost("/api/record/stop", async (
+    AudioEngine audioEngine, 
+    ScreenCaptureEngine screenEngine,
+    SpoolService spool,
+    GitLabService gitLabService,
+    ConfigService configService) =>
 {
-    if (!audioEngine.IsRecording && !screenEngine.IsCapturing)
+    string? stoppingSessionId;
+    string? stoppingSessionDir;
+
+    lock (sessionLock)
     {
-        return Results.BadRequest(new { error = "記録中ではありません。" });
+        if (!audioEngine.IsRecording && !screenEngine.IsCapturing && activeSession == null)
+        {
+            return Results.BadRequest(new { error = "記録中ではありません。" });
+        }
+
+        stoppingSessionId = activeSession?.SessionId;
+        stoppingSessionDir = activeSession?.SpoolDirectory;
+        activeSession = null;
     }
 
     try
@@ -350,11 +484,33 @@ app.MapPost("/api/record/stop", async (AudioEngine audioEngine, ScreenCaptureEng
             await audioEngine.StopRecordingAsync();
         }
 
+        MeetingSessionMetadata? metadata = null;
+        if (!string.IsNullOrEmpty(stoppingSessionDir))
+        {
+            metadata = spool.FinishSession(stoppingSessionDir);
+        }
+
+        // GitLab 自動アップロードの判定
+        GitLabUploadResult? gitLabResult = null;
+        var config = configService.LoadConfig().GitLab;
+
+        if (config.AutoUploadOnStop && config.IsConfigured && !string.IsNullOrEmpty(stoppingSessionDir))
+        {
+            Console.WriteLine($"[Program] 自動アップロード開始: セッション {stoppingSessionId}");
+            gitLabResult = await gitLabService.UploadSessionAsync(
+                stoppingSessionDir, 
+                config, 
+                metadata, 
+                deleteOnSuccess: true);
+        }
+
         return Results.Ok(new
         {
             message = "記録を停止・保存しました。",
+            sessionId = stoppingSessionId,
             audioFile = audioEngine.CurrentOutputFile,
-            capturedCount = screenEngine.CapturedCount
+            capturedCount = screenEngine.CapturedCount,
+            gitLabUpload = gitLabResult
         });
     }
     catch (Exception ex)
@@ -363,19 +519,76 @@ app.MapPost("/api/record/stop", async (AudioEngine audioEngine, ScreenCaptureEng
     }
 });
 
+// API: 保管中の未送信スプール一覧取得
+app.MapGet("/api/sessions/pending", (SpoolService spool) =>
+{
+    return Results.Ok(spool.GetPendingSessions());
+});
+
+// API: 指定セッションを手動で GitLab へアップロード
+app.MapPost("/api/sessions/upload", async (
+    SessionUploadRequest req,
+    SpoolService spool,
+    GitLabService gitLabService,
+    ConfigService configService) =>
+{
+    if (string.IsNullOrWhiteSpace(req.SessionId))
+    {
+        return Results.BadRequest(new { error = "セッションIDが指定されていません。" });
+    }
+
+    var config = configService.LoadConfig().GitLab;
+    if (!config.IsConfigured)
+    {
+        return Results.BadRequest(new { error = "GitLabの設定が未完了です。先に設定を入力・保存してください。" });
+    }
+
+    var sessionDir = Path.Combine(spool.SpoolBaseDir, req.SessionId);
+    if (!Directory.Exists(sessionDir))
+    {
+        return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {req.SessionId}" });
+    }
+
+    var metadata = spool.GetSessionMetadata(sessionDir);
+    var result = await gitLabService.UploadSessionAsync(sessionDir, config, metadata, deleteOnSuccess: true);
+
+    return Results.Ok(result);
+});
+
 // 全ての非APIリクエストを内蔵UIにフォールバック
 app.MapFallback(() => Results.Content(IndexHtml.Content, "text/html; charset=utf-8"));
 
+// LAN IP の取得とバインド情報表示
+var hostName = Dns.GetHostName();
+var localIps = Dns.GetHostAddresses(hostName)
+    .Where(ip => ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+    .Select(ip => ip.ToString())
+    .ToList();
+
 Console.WriteLine("========================================");
 Console.WriteLine(" 🎙️ WinMeetingRecorder サーバー起動");
-Console.WriteLine(" ブラウザで以下のURLを開いてください:");
+Console.WriteLine("========================================");
+Console.WriteLine(" ローカルPCからアクセス:");
 Console.WriteLine("   http://localhost:5000");
+if (localIps.Count > 0)
+{
+    Console.WriteLine(" LAN内・外部PC (Mac等) からアクセス:");
+    foreach (var ip in localIps)
+    {
+        Console.WriteLine($"   http://{ip}:5000");
+    }
+}
 Console.WriteLine("========================================");
 
-app.Run("http://localhost:5000");
+// 0.0.0.0 にバインド (LAN内からのアクセス許可)
+app.Run("http://0.0.0.0:5000");
 
 public record RecordStartRequest(
     string? PlaybackDeviceId, 
     string? CaptureDeviceId, 
     int? MonitorIndex, 
     bool? EnableScreenCapture);
+
+public record SessionUploadRequest(string SessionId);
+
+public record ActiveSessionState(string SessionId, string SpoolDirectory);

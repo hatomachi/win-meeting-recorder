@@ -6,14 +6,16 @@
   <title>WinMeetingRecorder</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-center p-6">
-  <div class="w-full max-w-lg bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8 space-y-6">
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-center p-6 font-sans">
+  <div class="w-full max-w-xl bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8 space-y-6">
+    
+    <!-- ヘッダー -->
     <div class="flex items-center justify-between border-b border-slate-700 pb-4">
       <div class="flex items-center space-x-3">
         <span class="text-3xl">🎙️</span>
         <div>
           <h1 class="text-xl font-bold tracking-tight">WinMeetingRecorder</h1>
-          <p class="text-xs text-slate-400">Windows専用 ダイアログレス会議記録ツール</p>
+          <p class="text-xs text-slate-400">Windows専用 ダイアログレス会議記録 ＆ GitLab自動同期</p>
         </div>
       </div>
       <div id="statusBadge" class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
@@ -21,7 +23,7 @@
       </div>
     </div>
 
-    <!-- デバイス選択 -->
+    <!-- デバイス・画面選択 -->
     <div class="space-y-4">
       <div>
         <label class="block text-xs font-medium text-slate-300 mb-1">🔊 スピーカー (相手の声 / Loopback)</label>
@@ -35,72 +37,414 @@
           <option value="">既定のマイクデバイス</option>
         </select>
       </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1">🖥️ 対象ディスプレイ (スライド変化自動検知)</label>
+        <select id="screenSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+          <option value="0">プライマリディスプレイ (既定)</option>
+        </select>
+      </div>
     </div>
 
-    <!-- 録音タイマー & カウンター -->
+    <!-- GitLab 連携設定アコーディオン -->
+    <div class="border border-slate-700 rounded-xl bg-slate-950/40 overflow-hidden">
+      <button id="toggleConfigBtn" class="w-full px-4 py-3 text-left text-xs font-semibold text-slate-300 flex items-center justify-between hover:bg-slate-800/50 transition">
+        <span class="flex items-center space-x-2">
+          <span>🦊</span>
+          <span>社内GitLab連携設定</span>
+          <span id="configSummaryBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400">未設定</span>
+        </span>
+        <span id="configArrow" class="text-xs transition-transform transform duration-200">▼</span>
+      </button>
+
+      <div id="configSection" class="hidden p-4 border-t border-slate-800 space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">GitLab サーバーURL</label>
+          <input type="text" id="gitlabUrl" placeholder="https://gitlab.example.com" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-400 mb-1">プロジェクトID / パス</label>
+            <input type="text" id="gitlabProjectId" placeholder="1234 または group/project" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">ブランチ名</label>
+            <input type="text" id="gitlabBranch" value="main" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">Personal Access Token (PAT)</label>
+          <div class="relative">
+            <input type="password" id="gitlabToken" placeholder="glpat-xxxxxxxxxxxxxxxxxxxx" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500 pr-16">
+            <button type="button" id="toggleTokenVisibility" class="absolute right-2 top-1.5 text-[11px] text-slate-400 hover:text-slate-200">表示</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">リポジトリ内 保存先フォルダ</label>
+          <input type="text" id="gitlabBasePath" value="meetings" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="flex items-center space-x-4 pt-1">
+          <label class="flex items-center space-x-1.5 cursor-pointer">
+            <input type="checkbox" id="gitlabIgnoreSsl" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-slate-300">自己署名SSL許可</span>
+          </label>
+          <label class="flex items-center space-x-1.5 cursor-pointer">
+            <input type="checkbox" id="gitlabAutoUpload" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-slate-300">停止時に自動プッシュ＆スプール消去</span>
+          </label>
+        </div>
+
+        <div class="flex space-x-2 pt-2">
+          <button id="testGitLabBtn" class="flex-1 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium transition">
+            🔍 接続テスト
+          </button>
+          <button id="saveGitLabBtn" class="flex-1 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition">
+            💾 設定を保存
+          </button>
+        </div>
+        <div id="gitlabTestResult" class="text-[11px] min-h-[1rem] break-all"></div>
+      </div>
+    </div>
+
+    <!-- 録画タイマー & カウンター -->
     <div class="bg-slate-950/60 rounded-xl p-4 border border-slate-800 flex items-center justify-around text-center">
       <div>
-        <p class="text-xs text-slate-400">録音時間</p>
+        <p class="text-xs text-slate-400">記録時間</p>
         <p id="timer" class="text-2xl font-mono font-bold text-white mt-1">00:00:00</p>
       </div>
       <div class="w-px h-8 bg-slate-800"></div>
       <div>
+        <p class="text-xs text-slate-400">撮影スクショ</p>
+        <p id="screenshotCount" class="text-2xl font-mono font-bold text-indigo-400 mt-1">0 <span class="text-xs font-normal text-slate-400">枚</span></p>
+      </div>
+      <div class="w-px h-8 bg-slate-800"></div>
+      <div>
         <p class="text-xs text-slate-400">音声ミキシング</p>
-        <p class="text-sm font-semibold text-indigo-400 mt-1">48kHz Float32</p>
+        <p class="text-sm font-semibold text-emerald-400 mt-1">48kHz Float32</p>
       </div>
     </div>
 
-    <!-- アクションボタン -->
-    <div class="pt-2">
+    <!-- アクションボタン群 -->
+    <div class="space-y-3 pt-2">
       <button id="toggleBtn" class="w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all duration-200 bg-red-600 hover:bg-red-500 text-white flex items-center justify-center space-x-2">
         <span id="btnIcon" class="inline-block w-4 h-4 rounded-full bg-white animate-pulse"></span>
-        <span id="btnText">録音を開始する</span>
+        <span id="btnText">会議の記録を開始する</span>
+      </button>
+
+      <!-- 記録中のみ表示される手動スクショボタン -->
+      <button id="manualScreenshotBtn" class="hidden w-full py-2.5 rounded-xl font-medium text-sm transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-slate-200 flex items-center justify-center space-x-2 border border-slate-600">
+        <span>📸</span>
+        <span>今すぐスクショを1枚撮影 (手動)</span>
       </button>
     </div>
 
+    <!-- 未送信スプール警告エリア (存在する場合に動的表示) -->
+    <div id="pendingSpoolArea" class="hidden border border-amber-500/30 bg-amber-500/10 rounded-xl p-3 text-xs space-y-2">
+      <div class="flex items-center justify-between text-amber-300 font-semibold">
+        <span>⚠️ 未送信のローカル会議記録があります</span>
+        <button id="refreshPendingBtn" class="text-[11px] underline hover:text-white">更新</button>
+      </div>
+      <div id="pendingList" class="space-y-1 text-slate-300"></div>
+    </div>
+
     <!-- メッセージ・ログ -->
-    <div id="logMessage" class="text-xs text-center text-slate-400 break-all min-h-[1.5rem]">
-      初期化完了。録音を開始できます。
+    <div id="logMessage" class="text-xs text-center text-slate-400 break-all min-h-[2rem]">
+      初期化完了。音声・画面の記録を開始できます。
     </div>
   </div>
 
   <script>
     let isRecording = false;
     let timerInterval = null;
+    let statusInterval = null;
     let secondsElapsed = 0;
+    let currentSessionId = null;
 
     const toggleBtn = document.getElementById('toggleBtn');
     const btnText = document.getElementById('btnText');
     const btnIcon = document.getElementById('btnIcon');
+    const manualScreenshotBtn = document.getElementById('manualScreenshotBtn');
     const statusBadge = document.getElementById('statusBadge');
     const timerDisplay = document.getElementById('timer');
+    const screenshotCountDisplay = document.getElementById('screenshotCount');
     const logMessage = document.getElementById('logMessage');
     const playbackSelect = document.getElementById('playbackSelect');
     const captureSelect = document.getElementById('captureSelect');
+    const screenSelect = document.getElementById('screenSelect');
 
-    async function loadDevices() {
+    // GitLab 設定UI要素
+    const toggleConfigBtn = document.getElementById('toggleConfigBtn');
+    const configSection = document.getElementById('configSection');
+    const configArrow = document.getElementById('configArrow');
+    const configSummaryBadge = document.getElementById('configSummaryBadge');
+    const gitlabUrl = document.getElementById('gitlabUrl');
+    const gitlabProjectId = document.getElementById('gitlabProjectId');
+    const gitlabBranch = document.getElementById('gitlabBranch');
+    const gitlabToken = document.getElementById('gitlabToken');
+    const gitlabBasePath = document.getElementById('gitlabBasePath');
+    const gitlabIgnoreSsl = document.getElementById('gitlabIgnoreSsl');
+    const gitlabAutoUpload = document.getElementById('gitlabAutoUpload');
+    const testGitLabBtn = document.getElementById('testGitLabBtn');
+    const saveGitLabBtn = document.getElementById('saveGitLabBtn');
+    const gitlabTestResult = document.getElementById('gitlabTestResult');
+    const toggleTokenVisibility = document.getElementById('toggleTokenVisibility');
+
+    // 未送信スプール要素
+    const pendingSpoolArea = document.getElementById('pendingSpoolArea');
+    const pendingList = document.getElementById('pendingList');
+    const refreshPendingBtn = document.getElementById('refreshPendingBtn');
+
+    // アコーディオン開閉
+    toggleConfigBtn.addEventListener('click', () => {
+      const isHidden = configSection.classList.contains('hidden');
+      if (isHidden) {
+        configSection.classList.remove('hidden');
+        configArrow.style.transform = 'rotate(180deg)';
+      } else {
+        configSection.classList.add('hidden');
+        configArrow.style.transform = 'rotate(0deg)';
+      }
+    });
+
+    toggleTokenVisibility.addEventListener('click', () => {
+      if (gitlabToken.type === 'password') {
+        gitlabToken.type = 'text';
+        toggleTokenVisibility.textContent = '伏せる';
+      } else {
+        gitlabToken.type = 'password';
+        toggleTokenVisibility.textContent = '表示';
+      }
+    });
+
+    function getGitLabConfigFromForm() {
+      return {
+        serverUrl: gitlabUrl.value.trim(),
+        projectId: gitlabProjectId.value.trim(),
+        personalAccessToken: gitlabToken.value.trim(),
+        branch: gitlabBranch.value.trim() || 'main',
+        basePath: gitlabBasePath.value.trim() || 'meetings',
+        ignoreSslErrors: gitlabIgnoreSsl.checked,
+        autoUploadOnStop: gitlabAutoUpload.checked
+      };
+    }
+
+    function updateConfigBadge(config) {
+      if (config && config.serverUrl && config.projectId && config.personalAccessToken) {
+        configSummaryBadge.textContent = '設定済み ✓';
+        configSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-900/60 text-emerald-300 border border-emerald-500/30';
+      } else {
+        configSummaryBadge.textContent = '未設定';
+        configSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400';
+      }
+    }
+
+    async function loadConfig() {
       try {
-        const res = await fetch('/api/devices');
-        if (!res.ok) return;
-        const data = await res.json();
-
-        playbackSelect.innerHTML = '<option value="">既定の再生デバイス</option>';
-        data.playback.forEach(d => {
-          const opt = document.createElement('option');
-          opt.value = d.id;
-          opt.textContent = `${d.name} ${d.isDefault ? '(既定)' : ''}`;
-          playbackSelect.appendChild(opt);
-        });
-
-        captureSelect.innerHTML = '<option value="">既定のマイクデバイス</option>';
-        data.capture.forEach(d => {
-          const opt = document.createElement('option');
-          opt.value = d.id;
-          opt.textContent = `${d.name} ${d.isDefault ? '(既定)' : ''}`;
-          captureSelect.appendChild(opt);
-        });
+        const res = await fetch('/api/config');
+        if (res.ok) {
+          const cfg = await res.json();
+          const gl = cfg.gitLab || {};
+          gitlabUrl.value = gl.serverUrl || '';
+          gitlabProjectId.value = gl.projectId || '';
+          gitlabBranch.value = gl.branch || 'main';
+          gitlabToken.value = gl.personalAccessToken || '';
+          gitlabBasePath.value = gl.basePath || 'meetings';
+          gitlabIgnoreSsl.checked = gl.ignoreSslErrors ?? true;
+          gitlabAutoUpload.checked = gl.autoUploadOnStop ?? true;
+          updateConfigBadge(gl);
+        }
       } catch (err) {
-        logMessage.textContent = 'デバイス取得エラー: ' + err.message;
+        console.warn('Config load error:', err);
+      }
+    }
+
+    async function saveConfig() {
+      const cfg = { gitLab: getGitLabConfigFromForm() };
+      try {
+        saveGitLabBtn.disabled = true;
+        saveGitLabBtn.textContent = '保存中...';
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cfg)
+        });
+        if (res.ok) {
+          gitlabTestResult.className = 'text-[11px] text-emerald-400';
+          gitlabTestResult.textContent = '✅ 設定を保存しました。';
+          updateConfigBadge(cfg.gitLab);
+        } else {
+          gitlabTestResult.className = 'text-[11px] text-rose-400';
+          gitlabTestResult.textContent = '設定保存に失敗しました。';
+        }
+      } catch (err) {
+        gitlabTestResult.className = 'text-[11px] text-rose-400';
+        gitlabTestResult.textContent = '保存例外: ' + err.message;
+      } finally {
+        saveGitLabBtn.disabled = false;
+        saveGitLabBtn.textContent = '💾 設定を保存';
+      }
+    }
+
+    async function testGitLabConnection() {
+      const gl = getGitLabConfigFromForm();
+      if (!gl.serverUrl || !gl.projectId || !gl.personalAccessToken) {
+        gitlabTestResult.className = 'text-[11px] text-amber-400';
+        gitlabTestResult.textContent = 'URL、プロジェクトID、PATを入力してください。';
+        return;
+      }
+
+      try {
+        testGitLabBtn.disabled = true;
+        testGitLabBtn.textContent = '接続テスト中...';
+        gitlabTestResult.className = 'text-[11px] text-slate-400';
+        gitlabTestResult.textContent = 'GitLab API に疎通確認中...';
+
+        const res = await fetch('/api/gitlab/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(gl)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          gitlabTestResult.className = 'text-[11px] text-emerald-400';
+          gitlabTestResult.textContent = `✅ 疎通成功！ プロジェクト: ${data.projectName} (既定ブランチ: ${data.defaultBranch})`;
+          updateConfigBadge(gl);
+        } else {
+          gitlabTestResult.className = 'text-[11px] text-rose-400';
+          gitlabTestResult.textContent = `❌ 接続失敗: ${data.message || '認証またはURL不正'}`;
+        }
+      } catch (err) {
+        gitlabTestResult.className = 'text-[11px] text-rose-400';
+        gitlabTestResult.textContent = `❌ 通信エラー: ${err.message}`;
+      } finally {
+        testGitLabBtn.disabled = false;
+        testGitLabBtn.textContent = '🔍 接続テスト';
+      }
+    }
+
+    testGitLabBtn.addEventListener('click', testGitLabConnection);
+    saveGitLabBtn.addEventListener('click', saveConfig);
+
+    // 未送信スプール確認
+    async function loadPendingSessions() {
+      try {
+        const res = await fetch('/api/sessions/pending');
+        if (res.ok) {
+          const sessions = await res.json();
+          if (sessions && sessions.length > 0) {
+            pendingSpoolArea.classList.remove('hidden');
+            pendingList.innerHTML = '';
+            sessions.forEach(s => {
+              const div = document.createElement('div');
+              div.className = 'flex items-center justify-between bg-slate-900/60 p-2 rounded';
+              const sizeMb = (s.totalSizeBytes / (1024 * 1024)).toFixed(1);
+              div.innerHTML = `
+                <div>
+                  <span class="font-mono text-white">${s.sessionId}</span>
+                  <span class="text-slate-400 text-[10px] ml-1">(${s.screenshotCount}枚, ${sizeMb} MB)</span>
+                </div>
+                <button class="upload-session-btn px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium" data-id="${s.sessionId}">
+                  GitLabへ送信
+                </button>
+              `;
+              pendingList.appendChild(div);
+            });
+
+            // 送信ボタンのハンドラ登録
+            document.querySelectorAll('.upload-session-btn').forEach(btn => {
+              btn.addEventListener('click', async (e) => {
+                const sid = e.target.getAttribute('data-id');
+                await uploadSingleSession(sid, e.target);
+              });
+            });
+          } else {
+            pendingSpoolArea.classList.add('hidden');
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    async function uploadSingleSession(sessionId, btnElement) {
+      if (btnElement) {
+        btnElement.disabled = true;
+        btnElement.textContent = '送信中...';
+      }
+      logMessage.innerHTML = `<span class="text-indigo-400 animate-pulse">☁️ セッション ${sessionId} を GitLab へアップロード中...</span>`;
+      try {
+        const res = await fetch('/api/sessions/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const link = data.webUrl ? `<a href="${data.webUrl}" target="_blank" class="underline text-indigo-400 font-semibold ml-1">コミットを開く ↗</a>` : '';
+          logMessage.innerHTML = `<span class="text-emerald-400 font-semibold">✅ GitLabへコミット完了！ ${link} (ローカル一時ファイルを削除しました)</span>`;
+          await loadPendingSessions();
+        } else {
+          logMessage.innerHTML = `<span class="text-rose-400">❌ アップロード失敗: ${data.message || 'エラー'}</span>`;
+          if (btnElement) {
+            btnElement.disabled = false;
+            btnElement.textContent = '再送信';
+          }
+        }
+      } catch (err) {
+        logMessage.innerHTML = `<span class="text-rose-400">❌ アップロードエラー: ${err.message}</span>`;
+        if (btnElement) {
+          btnElement.disabled = false;
+          btnElement.textContent = '再送信';
+        }
+      }
+    }
+
+    refreshPendingBtn.addEventListener('click', loadPendingSessions);
+
+    async function loadDevicesAndScreens() {
+      try {
+        // デバイス一覧
+        const devRes = await fetch('/api/devices');
+        if (devRes.ok) {
+          const data = await devRes.json();
+          playbackSelect.innerHTML = '<option value="">既定の再生デバイス</option>';
+          data.playback.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = `${d.name} ${d.isDefault ? '(既定)' : ''}`;
+            playbackSelect.appendChild(opt);
+          });
+
+          captureSelect.innerHTML = '<option value="">既定のマイクデバイス</option>';
+          data.capture.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = `${d.name} ${d.isDefault ? '(既定)' : ''}`;
+            captureSelect.appendChild(opt);
+          });
+        }
+
+        // 画面一覧
+        const screenRes = await fetch('/api/screens');
+        if (screenRes.ok) {
+          const data = await screenRes.json();
+          screenSelect.innerHTML = '';
+          data.screens.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.index;
+            opt.textContent = `${s.name} (${s.bounds.width}x${s.bounds.height}) ${s.isPrimary ? '(プライマリ)' : ''}`;
+            screenSelect.appendChild(opt);
+          });
+          if (data.virtualDesktop) {
+            const vdOpt = document.createElement('option');
+            vdOpt.value = "-1";
+            vdOpt.textContent = `全ディスプレイ結合 (仮想: ${data.virtualDesktop.bounds.width}x${data.virtualDesktop.bounds.height})`;
+            screenSelect.appendChild(vdOpt);
+          }
+          const offOpt = document.createElement('option');
+          offOpt.value = "off";
+          offOpt.textContent = "画面キャプチャなし (音声のみ)";
+          screenSelect.appendChild(offOpt);
+        }
+      } catch (err) {
+        logMessage.textContent = '初期ロードエラー: ' + err.message;
       }
     }
 
@@ -114,43 +458,69 @@
     function startTimer() {
       secondsElapsed = 0;
       timerDisplay.textContent = '00:00:00';
+      screenshotCountDisplay.innerHTML = '0 <span class="text-xs font-normal text-slate-400">枚</span>';
       clearInterval(timerInterval);
       timerInterval = setInterval(() => {
         secondsElapsed++;
         timerDisplay.textContent = formatTime(secondsElapsed);
       }, 1000);
+
+      // ステータスポーリング開始（スクショ枚数リアルタイム同期）
+      clearInterval(statusInterval);
+      statusInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/status');
+          if (res.ok) {
+            const s = await res.json();
+            if (s.isCapturing !== undefined) {
+              screenshotCountDisplay.innerHTML = `${s.capturedCount || 0} <span class="text-xs font-normal text-slate-400">枚</span>`;
+            }
+          }
+        } catch { /* ignore */ }
+      }, 2000);
     }
 
     function stopTimer() {
       clearInterval(timerInterval);
+      clearInterval(statusInterval);
     }
 
     toggleBtn.addEventListener('click', async () => {
       if (!isRecording) {
-        // 開始
         toggleBtn.disabled = true;
-        logMessage.textContent = '録音開始リクエスト中...';
+        logMessage.textContent = '記録開始リクエスト中...';
         try {
+          const screenVal = screenSelect.value;
+          const enableScreen = screenVal !== 'off';
+          const monitorIdx = enableScreen ? parseInt(screenVal, 10) : 0;
+
           const res = await fetch('/api/record/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               playbackDeviceId: playbackSelect.value || null,
-              captureDeviceId: captureSelect.value || null
+              captureDeviceId: captureSelect.value || null,
+              monitorIndex: monitorIdx,
+              enableScreenCapture: enableScreen
             })
           });
           const data = await res.json();
           if (res.ok) {
             isRecording = true;
-            statusBadge.textContent = '録音中';
+            currentSessionId = data.sessionId;
+            statusBadge.textContent = '記録中';
             statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30';
             toggleBtn.className = 'w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center space-x-2';
-            btnText.textContent = '録音を停止する';
+            btnText.textContent = '記録を停止する';
             btnIcon.className = 'inline-block w-4 h-4 bg-red-400 rounded-sm';
+            manualScreenshotBtn.classList.remove('hidden');
+            playbackSelect.disabled = true;
+            captureSelect.disabled = true;
+            screenSelect.disabled = true;
             startTimer();
-            logMessage.textContent = `録音中: ${data.audioPath}`;
+            logMessage.textContent = `記録セッション開始: ${data.sessionDir || data.sessionId}`;
           } else {
-            logMessage.textContent = `エラー: ${data.error || '録音開始失敗'}`;
+            logMessage.textContent = `エラー: ${data.error || '記録開始失敗'}`;
           }
         } catch (err) {
           logMessage.textContent = `エラー: ${err.message}`;
@@ -158,21 +528,45 @@
           toggleBtn.disabled = false;
         }
       } else {
-        // 停止
         toggleBtn.disabled = true;
-        logMessage.textContent = '録音停止 & ファイル確定中...';
+        statusBadge.textContent = '保存中...';
+        statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30';
+        logMessage.innerHTML = '<span class="animate-pulse">⏹️ 記録停止＆ファイル確定中...</span>';
+
         try {
           const res = await fetch('/api/record/stop', { method: 'POST' });
           const data = await res.json();
           if (res.ok) {
             isRecording = false;
             stopTimer();
-            statusBadge.textContent = '待機中';
-            statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+            playbackSelect.disabled = false;
+            captureSelect.disabled = false;
+            screenSelect.disabled = false;
+            manualScreenshotBtn.classList.add('hidden');
             toggleBtn.className = 'w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all duration-200 bg-red-600 hover:bg-red-500 text-white flex items-center justify-center space-x-2';
-            btnText.textContent = '録音を開始する';
+            btnText.textContent = '会議の記録を開始する';
             btnIcon.className = 'inline-block w-4 h-4 rounded-full bg-white animate-pulse';
-            logMessage.textContent = `保存完了: ${data.file}`;
+            screenshotCountDisplay.innerHTML = `${data.capturedCount || 0} <span class="text-xs font-normal text-slate-400">枚</span>`;
+
+            if (data.gitLabUpload) {
+              const gu = data.gitLabUpload;
+              if (gu.success) {
+                statusBadge.textContent = '送信完了';
+                statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                const link = gu.webUrl ? `<a href="${gu.webUrl}" target="_blank" class="underline text-indigo-400 font-semibold ml-1">コミットを開く ↗</a>` : '';
+                logMessage.innerHTML = `<span class="text-emerald-400 font-semibold">✅ GitLabへコミット完了！ ${link} (ローカル一時ファイルを自動削除しました)</span>`;
+              } else {
+                statusBadge.textContent = '送信失敗';
+                statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                logMessage.innerHTML = `<span class="text-rose-400">⚠️ GitLab送信失敗: ${gu.message} (ローカルに一時ファイルは安全に保持されています)</span>`;
+              }
+            } else {
+              statusBadge.textContent = '待機中';
+              statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+              logMessage.textContent = `保存完了！ 音声: ${data.audioFile || 'なし'} / スクショ: ${data.capturedCount || 0}枚`;
+            }
+
+            await loadPendingSessions();
           } else {
             logMessage.textContent = `エラー: ${data.error || '停止失敗'}`;
           }
@@ -184,7 +578,27 @@
       }
     });
 
-    loadDevices();
+    manualScreenshotBtn.addEventListener('click', async () => {
+      try {
+        manualScreenshotBtn.disabled = true;
+        const res = await fetch('/api/record/screenshot', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          logMessage.textContent = `📸 手動スクショ保存: ${data.capture?.fileName || '完了'}`;
+        } else {
+          logMessage.textContent = `スクショ撮影失敗: ${data.error || ''}`;
+        }
+      } catch (err) {
+        logMessage.textContent = `スクショエラー: ${err.message}`;
+      } finally {
+        manualScreenshotBtn.disabled = false;
+      }
+    });
+
+    // 初期化処理
+    loadConfig();
+    loadDevicesAndScreens();
+    loadPendingSessions();
   </script>
 </body>
 </html>
