@@ -12,6 +12,8 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+publish/
+*.exe
 
 # Visual Studio / Rider / VSCode
 .vs/

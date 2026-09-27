@@ -1,0 +1,44 @@
+name: Build Windows Single-File Exe
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Self-Contained Win-x64 Exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore Dependencies
+        run: dotnet restore src/WinMeetingRecorder/WinMeetingRecorder.csproj
+
+      - name: Publish Single-File Executable
+        run: >
+          dotnet publish src/WinMeetingRecorder/WinMeetingRecorder.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o ./publish
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinMeetingRecorder-win-x64
+          path: ./publish/WinMeetingRecorder.exe
+          if-no-files-found: error
+          retention-days: 7
