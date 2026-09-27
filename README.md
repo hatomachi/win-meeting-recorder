@@ -3,6 +3,14 @@
 > **Windows専用・ダイアログレス会議記録＆画面差分キャプチャツール**  
 > スピーカー（相手の声）＋マイクを音割れなく自動合成録音し、画面変化を検知してJPEGスクショを取得、ローカル一時保存を経て社内GitLabへ自動プッシュする単一exeツール。
 
+### 📦 最新バイナリのダウンロード（GitHubログイン不要）
+- 🚀 **直接ダウンロード（zip）**: [WinMeetingRecorder-win-x64.zip](https://github.com/hatomachi/win-meeting-recorder/releases/download/vlatest/WinMeetingRecorder-win-x64.zip)
+- 🔗 **Releases ページ**: [GitHub Releases (Latest)](https://github.com/hatomachi/win-meeting-recorder/releases/tag/vlatest)
+- 💻 **Windows PowerShell からの1行ダウンロード**:
+  ```powershell
+  Invoke-WebRequest -Uri "https://github.com/hatomachi/win-meeting-recorder/releases/download/vlatest/WinMeetingRecorder-win-x64.zip" -OutFile "WinMeetingRecorder.zip"; Expand-Archive WinMeetingRecorder.zip -DestinationPath . -Force
+  ```
+
 ---
 
 ## 📖 背景と動機（なぜこれを作るのか）
