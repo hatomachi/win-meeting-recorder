@@ -254,7 +254,7 @@ public class GitLabService
                 Console.WriteLine($"[GitLabService] 🎙️ WAV音声をコミットに追加: {wavBytes.Length / 1024.0:F1} KB");
             }
 
-            // 3. transcript.json の追加 (文字起こし結果)
+            // 3. transcript.json および transcript.yaml (webapp-obsidian / MINUTES_GUIDE 互換) の追加
             if (File.Exists(transcriptPath))
             {
                 var tBytes = await File.ReadAllBytesAsync(transcriptPath);
@@ -267,6 +267,21 @@ public class GitLabService
                     encoding = "base64"
                 });
                 Console.WriteLine($"[GitLabService] 📝 文字起こし transcript.json をコミットに追加");
+            }
+
+            var yamlPath = Path.Combine(sessionDir, "transcript.yaml");
+            if (File.Exists(yamlPath))
+            {
+                var yBytes = await File.ReadAllBytesAsync(yamlPath);
+                totalBytes += yBytes.Length;
+                actions.Add(new
+                {
+                    action = "create",
+                    file_path = $"{basePath}/transcript.yaml",
+                    content = Convert.ToBase64String(yBytes),
+                    encoding = "base64"
+                });
+                Console.WriteLine($"[GitLabService] 📝 文字起こし transcript.yaml (Obsidian互換) をコミットに追加");
             }
 
             // 4. スクリーンショット画像 (images/*.jpg) の追加
@@ -428,7 +443,7 @@ public class GitLabService
 
         if (transcript != null && transcript.Segments.Count > 0)
         {
-            sb.AppendLine($"- **文字起こし**: 完了 ({transcript.Segments.Count} 件の発話セグメント, 全 {transcript.Text.Length} 文字) [transcript.json](./transcript.json)");
+            sb.AppendLine($"- **文字起こし**: 完了 ({transcript.Segments.Count} 件の発話セグメント, 全 {transcript.Text.Length} 文字) [transcript.json](./transcript.json) / [transcript.yaml](./transcript.yaml)");
         }
 
         if (!string.IsNullOrWhiteSpace(minutesMarkdown))

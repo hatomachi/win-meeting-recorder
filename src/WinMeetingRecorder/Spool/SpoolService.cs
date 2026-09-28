@@ -1,5 +1,8 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using WinMeetingRecorder.Screen;
+using WinMeetingRecorder.Whisper;
 
 namespace WinMeetingRecorder.Spool;
 
@@ -102,7 +105,8 @@ public class SpoolService
             metadata.HasMp3 = File.Exists(mp3Path);
 
             var transcriptPath = Path.Combine(metadata.SpoolDirectory, metadata.TranscriptFileName ?? "transcript.json");
-            metadata.HasTranscript = File.Exists(transcriptPath);
+            var transcriptYamlPath = Path.Combine(metadata.SpoolDirectory, "transcript.yaml");
+            metadata.HasTranscript = File.Exists(transcriptPath) || File.Exists(transcriptYamlPath);
 
             var minutesPath = Path.Combine(metadata.SpoolDirectory, metadata.MinutesFileName ?? "MINUTES.md");
             metadata.HasMinutes = File.Exists(minutesPath);
@@ -126,7 +130,8 @@ public class SpoolService
             metadata.HasMp3 = File.Exists(mp3Path);
 
             var transcriptPath = Path.Combine(metadata.SpoolDirectory, metadata.TranscriptFileName ?? "transcript.json");
-            metadata.HasTranscript = File.Exists(transcriptPath);
+            var transcriptYamlPath = Path.Combine(metadata.SpoolDirectory, "transcript.yaml");
+            metadata.HasTranscript = File.Exists(transcriptPath) || File.Exists(transcriptYamlPath);
 
             var minutesPath = Path.Combine(metadata.SpoolDirectory, metadata.MinutesFileName ?? "MINUTES.md");
             metadata.HasMinutes = File.Exists(minutesPath);
@@ -187,7 +192,24 @@ public class SpoolService
         recovered.HasMp3 = File.Exists(mp3File);
 
         var transcriptFile = Path.Combine(sessionDir, "transcript.json");
-        recovered.HasTranscript = File.Exists(transcriptFile);
+        var transcriptYamlFile = Path.Combine(sessionDir, "transcript.yaml");
+        recovered.HasTranscript = File.Exists(transcriptFile) || File.Exists(transcriptYamlFile);
+
+        // transcript.json があり transcript.yaml がない場合は自動生成 (MINUTES_GUIDE互換)
+        if (File.Exists(transcriptFile) && !File.Exists(transcriptYamlFile))
+        {
+            try
+            {
+                var json = File.ReadAllText(transcriptFile);
+                var tr = JsonSerializer.Deserialize<WhisperTranscriptionResponse>(json, JsonOptions);
+                if (tr?.Segments != null && tr.Segments.Count > 0)
+                {
+                    var yaml = WhisperService.ToYamlPatternA(tr.Segments);
+                    File.WriteAllText(transcriptYamlFile, yaml, Encoding.UTF8);
+                }
+            }
+            catch { /* ignore */ }
+        }
 
         var minutesFile = Path.Combine(sessionDir, "MINUTES.md");
         recovered.HasMinutes = File.Exists(minutesFile);
@@ -199,11 +221,13 @@ public class SpoolService
             foreach (var imgPath in imageFiles)
             {
                 var fi = new FileInfo(imgPath);
+                var fallbackElapsed = (int)(fi.CreationTime - recovered.StartTime).TotalSeconds;
+                var elapsed = ParseElapsedSecondsFromFileName(fi.Name, fallbackElapsed);
                 recovered.Images.Add(new SessionImageItem
                 {
                     FileName = fi.Name,
                     RelativePath = Path.Combine("images", fi.Name),
-                    ElapsedSeconds = (int)(fi.CreationTime - recovered.StartTime).TotalSeconds,
+                    ElapsedSeconds = elapsed,
                     Reason = "recovered",
                     Timestamp = fi.CreationTime
                 });
@@ -211,6 +235,37 @@ public class SpoolService
         }
 
         return recovered;
+    }
+
+    /// <summary>
+    /// 画像ファイル名から経過秒数を解析します (MINUTES_GUIDE準拠: HH_MM_SS_screen.jpg または MM_SS_screen.jpg)
+    /// </summary>
+    public static int ParseElapsedSecondsFromFileName(string fileName, int fallback = 0)
+    {
+        var hmsMatch = Regex.Match(fileName, @"(?:^|[^0-9])(\d{1,2})[-_:.](\d{2})[-_:.](\d{2})(?:[^0-9]|$)");
+        if (hmsMatch.Success)
+        {
+            int h = int.Parse(hmsMatch.Groups[1].Value);
+            int m = int.Parse(hmsMatch.Groups[2].Value);
+            int s = int.Parse(hmsMatch.Groups[3].Value);
+            if (m < 60 && s < 60)
+            {
+                return h * 3600 + m * 60 + s;
+            }
+        }
+
+        var msMatch = Regex.Match(fileName, @"(?:^|[^0-9])(\d{1,2})[-_:.](\d{2})(?:[^0-9]|$)");
+        if (msMatch.Success)
+        {
+            int m = int.Parse(msMatch.Groups[1].Value);
+            int s = int.Parse(msMatch.Groups[2].Value);
+            if (s < 60)
+            {
+                return m * 60 + s;
+            }
+        }
+
+        return fallback;
     }
 
     /// <summary>

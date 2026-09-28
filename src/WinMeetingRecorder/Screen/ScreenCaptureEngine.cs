@@ -281,14 +281,21 @@ public class ScreenCaptureEngine : IDisposable
 
         var now = DateTime.Now;
         var elapsedSec = (int)(DateTime.UtcNow - _startTime).TotalSeconds;
-        var filename = $"screen_{now:yyyyMMdd_HHmmss}.jpg";
+        if (elapsedSec < 0) elapsedSec = 0;
+
+        // MINUTES_GUIDE (webapp-obsidian) 準拠: 経過時間ベースのファイル名 (HH_MM_SS_screen.jpg)
+        // 例: 会議開始5分12秒後 -> 00_05_12_screen.jpg
+        var ts = TimeSpan.FromSeconds(elapsedSec);
+        int hours = (int)ts.TotalHours;
+        var timePrefix = $"{hours:D2}_{ts.Minutes:D2}_{ts.Seconds:D2}";
+        var filename = $"{timePrefix}_screen.jpg";
         var destPath = Path.Combine(_imagesDirectory!, filename);
 
         // 同一秒に複数撮影された場合の重複回避
         int dupCount = 1;
         while (File.Exists(destPath))
         {
-            filename = $"screen_{now:yyyyMMdd_HHmmss}_{dupCount++}.jpg";
+            filename = $"{timePrefix}_screen_{dupCount++}.jpg";
             destPath = Path.Combine(_imagesDirectory!, filename);
         }
 

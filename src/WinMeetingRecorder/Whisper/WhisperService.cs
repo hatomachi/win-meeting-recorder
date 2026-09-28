@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using WinMeetingRecorder.Config;
@@ -256,10 +258,15 @@ public class WhisperService
             {
                 Directory.CreateDirectory(dir);
             }
-            await File.WriteAllTextAsync(outputJsonPath, JsonSerializer.Serialize(transcript, JsonOptions));
+            await File.WriteAllTextAsync(outputJsonPath, JsonSerializer.Serialize(transcript, JsonOptions), Encoding.UTF8);
+
+            // webapp-obsidian (MINUTES_GUIDE) 互換の transcript.yaml も同時に保存
+            var outputYamlPath = Path.Combine(dir ?? "", "transcript.yaml");
+            var yamlContent = ToYamlPatternA(transcript.Segments);
+            await File.WriteAllTextAsync(outputYamlPath, yamlContent, Encoding.UTF8);
 
             Console.WriteLine($"[WhisperService] ✅ 文字起こし成功: {transcript.Segments.Count} セグメント (全体: {transcript.Text.Length}文字, 所要時間: {sw.ElapsedMilliseconds}ms)");
-            Console.WriteLine($"[WhisperService] 💾 保存先: {outputJsonPath}");
+            Console.WriteLine($"[WhisperService] 💾 保存先: {outputJsonPath} & {outputYamlPath}");
 
             return new WhisperTranscribeResult(
                 Success: true,
@@ -280,5 +287,21 @@ public class WhisperService
                 Message: $"文字起こし通信例外: {ex.Message}",
                 ElapsedMilliseconds: sw.ElapsedMilliseconds);
         }
+    }
+
+    /// <summary>
+    /// Whisper セグメント一覧を webapp-obsidian (MINUTES_GUIDE Pattern A) 準拠の YAML 文字列へ変換します
+    /// </summary>
+    public static string ToYamlPatternA(IEnumerable<WhisperSegmentItem> segments)
+    {
+        var sb = new StringBuilder();
+        foreach (var seg in segments)
+        {
+            sb.AppendLine($"- start: {seg.Start.ToString("F2", CultureInfo.InvariantCulture)}");
+            sb.AppendLine($"  end: {seg.End.ToString("F2", CultureInfo.InvariantCulture)}");
+            var cleanText = (seg.Text ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "").Replace("\n", "\\n");
+            sb.AppendLine($"  text: \"{cleanText}\"");
+        }
+        return sb.ToString();
     }
 }
