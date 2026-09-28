@@ -89,6 +89,14 @@ public class WhisperService
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         };
 
+        if (config.BypassProxy)
+        {
+            // 社内Whisperサーバー(IP直接)への接続は、OS/環境変数のプロキシ設定（PACやHTTP_PROXY等）に左右されず直接接続する。
+            // 社内IPであってもプロキシのバイパス例外に含まれていないとプロキシ経由となり到達できずに失敗するケースがあるため。
+            handler.UseProxy = false;
+            handler.Proxy = null;
+        }
+
         var client = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromMinutes(30) // 大容量・長時間音声の推論待ち対応

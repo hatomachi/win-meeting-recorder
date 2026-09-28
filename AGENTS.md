@@ -126,10 +126,12 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
     - 会議中にタスクトレイを「チラ見」するだけで、「相手の声も自分の声も確実に拾えている」ことが一目でわかり、絶大な安心感を提供。
     - 古い HICON を Win32 API `DestroyIcon` で毎回確実に解放し、GDI/USER ハンドルリークを完全防止。
     - 右クリックメニューから「🔴 記録開始」「⏹️ 記録停止」「📸 スクリーンショット」「🌐 操作盤を開く」「❌ 終了」を完備。
-    - Web UI 側ともバックグラウンド相互ポーリングで完全双方向同期。
-- **次期実装タスク（Phase 8B: 会議ビューア統合 ＆ GitLab上の既存議事録の手元再生成・再プッシュ）**:
-  - `voice-reflection-agent` で構築済みのリッチタイムラインビューアとの完全互換連携。
-  - GitLab 上に他人がアップロード済みの過去会議データを取得し、手元でプロンプト調整やAIチャット修正を行い、GitLabへ再プッシュする機能。
+    - Web UI 側ともバックグラウンド相互ポーリング・UIスレッド安全同期（`SynchronizationContext` / 自己修復監視ループ）で完全双方向同期。
+    - 社内プロキシ環境対応: 社内GitLab・社内Whisperへの直接接続時、OS/環境変数プロキシをバイパスする `BypassProxy` オプションを完備。
+- **次期実装タスク（Phase 8B: webapp-obsidian 議事録ビューア連携 ＆ GitLabバックフィル ＆ 外部音声インポート）**:
+  - **Phase 8B-0**: `MINUTES_GUIDE.md` 準拠フォーマット（経過時間ベース `HH_MM_SS_screen.jpg` スクショ命名、`transcript.yaml` 同時生成、`README.md` / `MINUTES.md` アトミックコミット）の完全対応。
+  - **Phase 8B-1**: GitLab上の未処理フォルダ（音声はあるがtranscriptやminutesがない過去会議）の自動検出 ＆ バックフィル（文字起こし＋AI議事録作成・再コミット）機能。
+  - **Phase 8B-2**: 単品録音ファイル（iPhoneボイスメモ等のm4a/mp3）のドラッグ＆ドロップインポートと全自動パイプライン接続。
 
 ---
 

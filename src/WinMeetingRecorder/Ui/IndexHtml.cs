@@ -97,10 +97,14 @@ public static class IndexHtml
             <label class="block text-slate-400 mb-1">リポジトリ内 保存先フォルダ</label>
             <input type="text" id="gitlabBasePath" value="meetings" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
           </div>
-          <div class="flex items-center space-x-4 pt-1">
+          <div class="flex items-center space-x-4 pt-1 flex-wrap gap-y-2">
             <label class="flex items-center space-x-1.5 cursor-pointer">
               <input type="checkbox" id="gitlabIgnoreSsl" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
               <span class="text-slate-300">自己署名SSL許可</span>
+            </label>
+            <label class="flex items-center space-x-1.5 cursor-pointer">
+              <input type="checkbox" id="gitlabBypassProxy" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+              <span class="text-slate-300">プロキシバイパス (社内直接)</span>
             </label>
             <label class="flex items-center space-x-1.5 cursor-pointer">
               <input type="checkbox" id="gitlabAutoUpload" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
@@ -152,7 +156,11 @@ public static class IndexHtml
             <label class="block text-slate-400 mb-1">専門用語・ヒントプロンプト (任意)</label>
             <input type="text" id="whisperPrompt" placeholder="例: 会議, アジェンダ, GitLab, .NET" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
           </div>
-          <div class="flex items-center space-x-4 pt-1">
+          <div class="flex items-center space-x-4 pt-1 flex-wrap gap-y-2">
+            <label class="flex items-center space-x-1.5 cursor-pointer">
+              <input type="checkbox" id="whisperBypassProxy" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+              <span class="text-slate-300">プロキシバイパス (社内直接)</span>
+            </label>
             <label class="flex items-center space-x-1.5 cursor-pointer">
               <input type="checkbox" id="whisperAutoTranscribe" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
               <span class="text-slate-300">停止時に自動で文字起こしを実行</span>
@@ -386,6 +394,7 @@ public static class IndexHtml
     const gitlabToken = document.getElementById('gitlabToken');
     const gitlabBasePath = document.getElementById('gitlabBasePath');
     const gitlabIgnoreSsl = document.getElementById('gitlabIgnoreSsl');
+    const gitlabBypassProxy = document.getElementById('gitlabBypassProxy');
     const gitlabAutoUpload = document.getElementById('gitlabAutoUpload');
     const testGitLabBtn = document.getElementById('testGitLabBtn');
     const saveGitLabBtn = document.getElementById('saveGitLabBtn');
@@ -402,6 +411,7 @@ public static class IndexHtml
     const whisperLanguage = document.getElementById('whisperLanguage');
     const whisperApiKey = document.getElementById('whisperApiKey');
     const whisperPrompt = document.getElementById('whisperPrompt');
+    const whisperBypassProxy = document.getElementById('whisperBypassProxy');
     const whisperAutoTranscribe = document.getElementById('whisperAutoTranscribe');
     const testWhisperBtn = document.getElementById('testWhisperBtn');
     const saveWhisperBtn = document.getElementById('saveWhisperBtn');
@@ -480,6 +490,7 @@ public static class IndexHtml
         branch: gitlabBranch.value.trim() || 'main',
         basePath: gitlabBasePath.value.trim() || 'meetings',
         ignoreSslErrors: gitlabIgnoreSsl.checked,
+        bypassProxy: gitlabBypassProxy.checked,
         autoUploadOnStop: gitlabAutoUpload.checked
       };
     }
@@ -491,6 +502,7 @@ public static class IndexHtml
         model: whisperModel.value.trim() || 'whisper-1',
         language: whisperLanguage.value.trim() || 'ja',
         prompt: whisperPrompt.value.trim(),
+        bypassProxy: whisperBypassProxy.checked,
         autoTranscribeOnStop: whisperAutoTranscribe.checked
       };
     }
@@ -542,6 +554,7 @@ public static class IndexHtml
           gitlabToken.value = gl.personalAccessToken || '';
           gitlabBasePath.value = gl.basePath || 'meetings';
           gitlabIgnoreSsl.checked = gl.ignoreSslErrors ?? true;
+          gitlabBypassProxy.checked = gl.bypassProxy ?? false;
           gitlabAutoUpload.checked = gl.autoUploadOnStop ?? true;
           updateConfigBadge(gl);
 
@@ -551,6 +564,7 @@ public static class IndexHtml
           whisperLanguage.value = wh.language || 'ja';
           whisperApiKey.value = wh.apiKey || '';
           whisperPrompt.value = wh.prompt || '';
+          whisperBypassProxy.checked = wh.bypassProxy ?? true;
           whisperAutoTranscribe.checked = wh.autoTranscribeOnStop ?? true;
           updateWhisperBadge(wh);
 

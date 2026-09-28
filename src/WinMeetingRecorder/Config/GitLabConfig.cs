@@ -36,6 +36,11 @@ public class GitLabConfig
     public bool IgnoreSslErrors { get; set; } = true;
 
     /// <summary>
+    /// 社内GitLab等への接続時、OS/環境変数のプロキシ設定をバイパスして直接接続するか (デフォルト: false)
+    /// </summary>
+    public bool BypassProxy { get; set; } = false;
+
+    /// <summary>
     /// 録音停止時に自動でGitLabにアップロードするか (デフォルト: true)
     /// </summary>
     public bool AutoUploadOnStop { get; set; } = true;

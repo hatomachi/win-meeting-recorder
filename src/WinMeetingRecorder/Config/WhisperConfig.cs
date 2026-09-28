@@ -31,6 +31,11 @@ public class WhisperConfig
     public string Prompt { get; set; } = "";
 
     /// <summary>
+    /// 社内/ローカルWhisperサーバーへの接続時、OS/環境変数のプロキシ設定をバイパスして直接接続するか (デフォルト: true)
+    /// </summary>
+    public bool BypassProxy { get; set; } = true;
+
+    /// <summary>
     /// 会議終了時に自動で文字起こしを実行するか (デフォルト: true)
     /// </summary>
     public bool AutoTranscribeOnStop { get; set; } = true;

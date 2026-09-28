@@ -54,6 +54,13 @@ public class GitLabService
                 HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
         }
 
+        if (config.BypassProxy)
+        {
+            // 社内GitLab等への接続時、OS/環境変数のプロキシ設定（PACやHTTP_PROXY等）をバイパスして直接接続
+            handler.UseProxy = false;
+            handler.Proxy = null;
+        }
+
         var client = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromMinutes(10) // 大容量アップロード対応
