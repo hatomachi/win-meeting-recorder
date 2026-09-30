@@ -129,7 +129,7 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
     - Web UI 側ともバックグラウンド相互ポーリング・UIスレッド安全同期（`SynchronizationContext` / 自己修復監視ループ）で完全双方向同期。
     - 社内プロキシ環境対応: 社内GitLab・社内Whisperへの直接接続時、OS/環境変数プロキシをバイパスする `BypassProxy` オプションを完備。
 - **次期実装タスク（Phase 8B: webapp-obsidian 議事録ビューア連携 ＆ GitLabバックフィル ＆ 外部音声インポート）**:
-  - **Phase 8B-0**: `MINUTES_GUIDE.md` 準拠フォーマット（経過時間ベース `HH_MM_SS_screen.jpg` スクショ命名、`transcript.yaml` 同時生成、`README.md` / `MINUTES.md` アトミックコミット）の完全対応。
+  - ~~**Phase 8B-0**: `MINUTES_GUIDE.md` 準拠フォーマット（経過時間ベース `HH_MM_SS_screen.jpg` スクショ命名、`transcript.yaml` 同時生成、`README.md` / `MINUTES.md` アトミックコミット）の完全対応。~~ ✅ **完了** (`75ca6d2`)
   - **Phase 8B-1**: GitLab上の未処理フォルダ（音声はあるがtranscriptやminutesがない過去会議）の自動検出 ＆ バックフィル（文字起こし＋AI議事録作成・再コミット）機能。
   - **Phase 8B-2**: 単品録音ファイル（iPhoneボイスメモ等のm4a/mp3）のドラッグ＆ドロップインポートと全自動パイプライン接続。
 
