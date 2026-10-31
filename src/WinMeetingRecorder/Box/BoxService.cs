@@ -791,16 +791,84 @@ public class BoxService
 
             Console.WriteLine($"[BoxService] 🎉 全{totalFiles}件のファイルをBoxへアップロード完了しました！");
 
-            // 6. ローカルスプール一時ファイルの自動クリーンアップ
+            // 6. 二重安全確認: Box API でフォルダ内の全ファイルを再取得し、実在・サイズを厳格に検証
+            Console.WriteLine($"[BoxService] 🔍 [二重安全確認] Box APIで全ファイルの実在を検証中 (Folder ID: {boxFolderId})...");
+            var expectedNames = uploadFiles.Select(f => f.RemoteName).Append("meta.json").ToList();
+            await VerifyFolderFilesAsync(boxFolderId, expectedNames);
+            Console.WriteLine($"[BoxService] ✅ Box上の全{expectedNames.Count}件の実在を確認完了！安全にスプールを消去します。");
+
+            // 7. 実在確認完了後のみ、ローカルスプール一時ファイルを自動クリーンアップ
             TryCleanupSpoolFiles(sessionDir);
 
             var folderUrl = $"https://app.box.com/folder/{boxFolderId}";
-            return new BoxUploadResult(true, "Box への全件アップロードが完了しました。", boxFolderId, folderUrl);
+            return new BoxUploadResult(true, "Box への全件アップロードおよび実在検証が完了しました。", boxFolderId, folderUrl);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[BoxService] ❌ Box アップロード失敗 (スプールは安全に保持されます): {ex.Message}");
             return new BoxUploadResult(false, $"Box アップロード失敗: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Box API (GET /folders/{folderId}/items) を呼び出し、
+    /// アップロードした全ファイルがBox上に確実に存在し、ファイルサイズが0より大きいことを厳格に検証する
+    /// </summary>
+    private async Task VerifyFolderFilesAsync(string boxFolderId, List<string> expectedFileNames)
+    {
+        var token = await GetValidAccessTokenAsync();
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{boxFolderId}/items?fields=id,name,type,size&limit=1000");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var res = await HttpClient.SendAsync(req);
+        var jsonRes = await res.Content.ReadAsStringAsync();
+
+        if (!res.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Box上のファイル実在確認APIに失敗しました: {res.StatusCode} - {jsonRes}");
+        }
+
+        using var doc = JsonDocument.Parse(jsonRes);
+        var entries = doc.RootElement.GetProperty("entries");
+
+        var boxFiles = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries.EnumerateArray())
+        {
+            if (entry.GetProperty("type").GetString() == "file")
+            {
+                var name = entry.GetProperty("name").GetString()!;
+                var size = entry.TryGetProperty("size", out var s) ? s.GetInt64() : 0;
+                boxFiles[name] = size;
+            }
+        }
+
+        var missingFiles = new List<string>();
+        var zeroByteFiles = new List<string>();
+
+        foreach (var expected in expectedFileNames)
+        {
+            if (!boxFiles.TryGetValue(expected, out var size))
+            {
+                missingFiles.Add(expected);
+            }
+            else if (size <= 0)
+            {
+                zeroByteFiles.Add(expected);
+            }
+        }
+
+        if (missingFiles.Count > 0 || zeroByteFiles.Count > 0)
+        {
+            var msg = new StringBuilder("Box上のファイル検証に失敗しました:");
+            if (missingFiles.Count > 0)
+            {
+                msg.Append($" [未検出: {string.Join(", ", missingFiles)}]");
+            }
+            if (zeroByteFiles.Count > 0)
+            {
+                msg.Append($" [0バイト不正: {string.Join(", ", zeroByteFiles)}]");
+            }
+            throw new InvalidOperationException(msg.ToString());
         }
     }
 
