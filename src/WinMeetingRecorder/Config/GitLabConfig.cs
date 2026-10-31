@@ -59,6 +59,7 @@ public class GitLabConfig
 /// </summary>
 public class AppConfig
 {
+    public BoxConfig Box { get; set; } = new();
     public GitLabConfig GitLab { get; set; } = new();
     public WhisperConfig Whisper { get; set; } = new();
     public AiConfig Ai { get; set; } = new();

@@ -6,6 +6,7 @@ using System.Windows.Forms;
 using NAudio.Wave;
 using WinMeetingRecorder.Ai;
 using WinMeetingRecorder.Audio;
+using WinMeetingRecorder.Box;
 using WinMeetingRecorder.Config;
 using WinMeetingRecorder.GitLab;
 using WinMeetingRecorder.Screen;
@@ -442,6 +443,7 @@ public static class Program
 
         // DI コンテナ登録
         builder.Services.AddSingleton<ConfigService>();
+        builder.Services.AddSingleton<BoxService>();
         builder.Services.AddSingleton<PromptService>();
         builder.Services.AddSingleton<AiService>();
         builder.Services.AddSingleton<SpoolService>();
@@ -472,6 +474,74 @@ public static class Program
         {
             configService.SaveConfig(newConfig);
             return Results.Ok(new { message = "設定を保存しました。" });
+        });
+
+        // API: Box 認証状態・テーマ情報取得
+        app.MapGet("/api/box/status", (BoxService boxService) =>
+        {
+            return Results.Ok(boxService.GetAuthStatus());
+        });
+
+        // API: Box OAuth 2.0 ログイン開始 (ブラウザオープン)
+        app.MapPost("/api/box/login", async (BoxService boxService) =>
+        {
+            try
+            {
+                var status = await boxService.StartOAuthLoginAsync();
+                return Results.Ok(new { success = true, message = "Box認証に成功しました。", status });
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { success = false, message = ex.Message });
+            }
+        });
+
+        // API: Box 会議テーマ一覧取得
+        app.MapGet("/api/box/themes", async (BoxService boxService) =>
+        {
+            var themes = await boxService.GetThemesAsync();
+            return Results.Ok(themes);
+        });
+
+        // API: Box 会議テーマの強制再取得
+        app.MapPost("/api/box/themes/refresh", async (BoxService boxService) =>
+        {
+            var themes = await boxService.GetThemesAsync(forceRefresh: true);
+            return Results.Ok(new { success = true, themes, count = themes.Count });
+        });
+
+        // API: Box 会議テーマ選択変更
+        app.MapPost("/api/box/theme/select", (BoxService boxService, BoxSelectThemeRequest req) =>
+        {
+            boxService.SelectTheme(req.ThemeId);
+            return Results.Ok(boxService.GetAuthStatus());
+        });
+
+        // API: 指定セッションを手動で Box へアップロード
+        app.MapPost("/api/box/upload", async (
+            BoxUploadSessionRequest req,
+            SpoolService spool,
+            BoxService boxService) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.SessionId))
+            {
+                return Results.BadRequest(new { error = "セッションIDが指定されていません。" });
+            }
+
+            var sessionDir = Path.Combine(spool.SpoolBaseDir, req.SessionId);
+            if (!Directory.Exists(sessionDir))
+            {
+                return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {req.SessionId}" });
+            }
+
+            var metadata = spool.GetSessionMetadata(sessionDir);
+            if (metadata == null)
+            {
+                return Results.BadRequest(new { error = "セッションメタデータの読み込みに失敗しました。" });
+            }
+
+            var result = await boxService.UploadSessionAsync(sessionDir, metadata, req.ThemeId);
+            return Results.Ok(result);
         });
 
         // API: GitLab 接続テスト
@@ -841,7 +911,8 @@ public static class Program
                 req?.PlaybackDeviceId,
                 req?.CaptureDeviceId,
                 req?.MonitorIndex,
-                req?.EnableScreenCapture);
+                req?.EnableScreenCapture,
+                req?.ThemeId);
 
             var res = await workflow.StartRecordingAsync(opt);
             if (!res.Success)
@@ -995,8 +1066,19 @@ public static class Program
 
         var workflowService = app.Services.GetRequiredService<RecordingWorkflowService>();
         var audioEngine = app.Services.GetRequiredService<AudioEngine>();
+        var boxService = app.Services.GetRequiredService<BoxService>();
 
-        var trayContext = new TrayApplicationContext(workflowService, audioEngine, async () =>
+        // 起動時にBoxテーマ台帳を非同期で事前ロード
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await boxService.GetThemesAsync();
+            }
+            catch { /* ignore */ }
+        });
+
+        var trayContext = new TrayApplicationContext(workflowService, audioEngine, boxService, async () =>
         {
             if (workflowService.IsRecording)
             {
@@ -1035,7 +1117,12 @@ public record RecordStartRequest(
     string? PlaybackDeviceId, 
     string? CaptureDeviceId, 
     int? MonitorIndex, 
-    bool? EnableScreenCapture);
+    bool? EnableScreenCapture,
+    string? ThemeId = null);
+
+public record BoxSelectThemeRequest(string ThemeId);
+
+public record BoxUploadSessionRequest(string SessionId, string? ThemeId = null);
 
 public record SessionUploadRequest(string SessionId);
 

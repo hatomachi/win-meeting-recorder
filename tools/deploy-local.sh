@@ -22,4 +22,4 @@ echo "🔄 [3/3] 新バイナリを対話セッションで再起動中..."
 ssh $WIN_HOST "schtasks /create /tn 'StartRecorder' /tr 'C:\work\WinMeetingRecorder.exe --no-browser' /sc once /st '23:59' /ru 'sohik' /it /f; schtasks /run /tn 'StartRecorder'; Start-Sleep -Seconds 3; schtasks /delete /tn 'StartRecorder' /f"
 
 echo "✅ デプロイ完了！"
-echo "Web UI URL: http://192.168.11.19:5000"
+echo "Web UI URL: http://192.168.11.13:5000"

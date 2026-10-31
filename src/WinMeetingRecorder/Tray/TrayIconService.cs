@@ -4,6 +4,7 @@ using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WinMeetingRecorder.Audio;
+using WinMeetingRecorder.Box;
 using WinMeetingRecorder.Workflow;
 
 namespace WinMeetingRecorder.Tray;
@@ -15,9 +16,10 @@ public class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext(
         RecordingWorkflowService workflow, 
         AudioEngine audioEngine, 
+        BoxService boxService,
         Func<Task> onShutdownRequested)
     {
-        _trayService = new TrayIconService(workflow, audioEngine, async () =>
+        _trayService = new TrayIconService(workflow, audioEngine, boxService, async () =>
         {
             await onShutdownRequested();
             ExitThread();
@@ -45,12 +47,14 @@ public class TrayIconService : IDisposable
 
     private readonly RecordingWorkflowService _workflow;
     private readonly AudioEngine _audioEngine;
+    private readonly BoxService _boxService;
     private readonly Action _onExitRequested;
     private readonly SynchronizationContext? _syncContext;
 
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _contextMenu;
     private readonly ToolStripMenuItem _headerItem;
+    private readonly ToolStripMenuItem _themeSubMenu;
     private readonly ToolStripMenuItem _startItem;
     private readonly ToolStripMenuItem _stopItem;
     private readonly ToolStripMenuItem _screenshotItem;
@@ -66,10 +70,12 @@ public class TrayIconService : IDisposable
     public TrayIconService(
         RecordingWorkflowService workflow, 
         AudioEngine audioEngine,
+        BoxService boxService,
         Action onExitRequested)
     {
         _workflow = workflow;
         _audioEngine = audioEngine;
+        _boxService = boxService;
         _onExitRequested = onExitRequested;
         _syncContext = SynchronizationContext.Current;
 
@@ -85,6 +91,8 @@ public class TrayIconService : IDisposable
             Font = new Font(Control.DefaultFont, FontStyle.Bold)
         };
 
+        _themeSubMenu = new ToolStripMenuItem("📋 会議テーマ切替");
+
         _startItem = new ToolStripMenuItem("🔴 会議の記録を開始", null, async (s, e) =>
         {
             if (s is ToolStripMenuItem item) item.Enabled = false;
@@ -96,10 +104,10 @@ public class TrayIconService : IDisposable
             }
         });
 
-        _stopItem = new ToolStripMenuItem("⏹️ 記録を停止 (保存/AI処理)", null, async (s, e) =>
+        _stopItem = new ToolStripMenuItem("⏹️ 記録を停止 (Boxへ自動アップロード)", null, async (s, e) =>
         {
             if (s is ToolStripMenuItem item) item.Enabled = false;
-            ShowBalloon("⏹️ 記録停止", "会議記録を停止しました。MP3圧縮・AI議事録・GitLab同期を実行中...", ToolTipIcon.Info);
+            ShowBalloon("⏹️ 記録停止", "会議記録を停止しました。MP3変換とBoxへの自動アップロードを実行中...", ToolTipIcon.Info);
             var res = await _workflow.StopRecordingAsync();
             if (!res.Success)
             {
@@ -139,6 +147,7 @@ public class TrayIconService : IDisposable
 
         _contextMenu.Items.Add(_headerItem);
         _contextMenu.Items.Add(new ToolStripSeparator());
+        _contextMenu.Items.Add(_themeSubMenu);
         _contextMenu.Items.Add(_startItem);
         _contextMenu.Items.Add(_stopItem);
         _contextMenu.Items.Add(_screenshotItem);
@@ -146,6 +155,11 @@ public class TrayIconService : IDisposable
         _contextMenu.Items.Add(_openWebItem);
         _contextMenu.Items.Add(new ToolStripSeparator());
         _contextMenu.Items.Add(_exitItem);
+
+        // テーマ一覧の初期ロードとイベント購読
+        UpdateThemeMenuItems();
+        _boxService.ThemesUpdated += _ => RunOnUIThread(UpdateThemeMenuItems);
+        _boxService.AuthStatusChanged += _ => RunOnUIThread(UpdateThemeMenuItems);
 
         // NotifyIcon の初期化
         _notifyIcon = new NotifyIcon
@@ -496,6 +510,61 @@ public class TrayIconService : IDisposable
         path.AddArc(arc, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    private void RunOnUIThread(Action action)
+    {
+        if (_syncContext != null)
+        {
+            _syncContext.Post(_ =>
+            {
+                if (!_isDisposed) action();
+            }, null);
+        }
+        else
+        {
+            action();
+        }
+    }
+
+    private void UpdateThemeMenuItems()
+    {
+        try
+        {
+            var status = _boxService.GetAuthStatus();
+            var themes = _boxService.GetThemesAsync().GetAwaiter().GetResult();
+
+            _themeSubMenu.DropDownItems.Clear();
+            _themeSubMenu.Text = string.IsNullOrEmpty(status.ActiveThemeName)
+                ? "📋 会議テーマ切替"
+                : $"📋 テーマ: {status.ActiveThemeName}";
+
+            if (themes == null || themes.Count == 0)
+            {
+                var emptyItem = new ToolStripMenuItem("(テーマ未取得)") { Enabled = false };
+                _themeSubMenu.DropDownItems.Add(emptyItem);
+                return;
+            }
+
+            foreach (var theme in themes)
+            {
+                var isSelected = theme.Id == status.ActiveThemeId;
+                var item = new ToolStripMenuItem(theme.Name, null, (s, e) =>
+                {
+                    _boxService.SelectTheme(theme.Id);
+                    UpdateThemeMenuItems();
+                    ShowBalloon("📋 テーマ切替", $"会議テーマを「{theme.Name}」に切り替えました。", ToolTipIcon.Info);
+                })
+                {
+                    Checked = isSelected
+                };
+                _themeSubMenu.DropDownItems.Add(item);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Tray] テーマメニュー更新警告: {ex.Message}");
+        }
     }
 
     public void ShowBalloon(string title, string text, ToolTipIcon icon = ToolTipIcon.Info)

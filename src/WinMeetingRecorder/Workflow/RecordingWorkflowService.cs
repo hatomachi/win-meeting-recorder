@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using WinMeetingRecorder.Ai;
 using WinMeetingRecorder.Audio;
+using WinMeetingRecorder.Box;
 using WinMeetingRecorder.Config;
 using WinMeetingRecorder.GitLab;
 using WinMeetingRecorder.Screen;
@@ -27,6 +28,7 @@ public record RecordingStopResult(
     WhisperTranscribeResult? WhisperTranscription = null, 
     AiExecutionResult? AiMinutes = null, 
     GitLabUploadResult? GitLabUpload = null, 
+    BoxUploadResult? BoxUpload = null,
     PipelineStatus? Pipeline = null);
 
 public record ActiveSessionState(string SessionId, string SpoolDirectory);
@@ -35,13 +37,15 @@ public record RecordStartOptions(
     string? PlaybackDeviceId = null, 
     string? CaptureDeviceId = null, 
     int? MonitorIndex = null, 
-    bool? EnableScreenCapture = null);
+    bool? EnableScreenCapture = null,
+    string? ThemeId = null);
 
 public class RecordingWorkflowService
 {
     private readonly AudioEngine _audioEngine;
     private readonly ScreenCaptureEngine _screenEngine;
     private readonly SpoolService _spoolService;
+    private readonly BoxService _boxService;
     private readonly GitLabService _gitLabService;
     private readonly WhisperService _whisperService;
     private readonly AiService _aiService;
@@ -50,6 +54,7 @@ public class RecordingWorkflowService
     private readonly object _lock = new();
     private ActiveSessionState? _activeSession;
     private DateTime? _recordStartTime;
+    private string? _selectedThemeId;
 
     public bool IsRecording
     {
@@ -99,6 +104,7 @@ public class RecordingWorkflowService
         AudioEngine audioEngine,
         ScreenCaptureEngine screenEngine,
         SpoolService spoolService,
+        BoxService boxService,
         GitLabService gitLabService,
         WhisperService whisperService,
         AiService aiService,
@@ -107,6 +113,7 @@ public class RecordingWorkflowService
         _audioEngine = audioEngine;
         _screenEngine = screenEngine;
         _spoolService = spoolService;
+        _boxService = boxService;
         _gitLabService = gitLabService;
         _whisperService = whisperService;
         _aiService = aiService;
@@ -139,6 +146,8 @@ public class RecordingWorkflowService
 
             int monitorIdx = options?.MonitorIndex ?? 0;
             var screenInfo = ScreenService.ResolveScreen(monitorIdx);
+
+            _selectedThemeId = options?.ThemeId ?? _configService.LoadConfig().Box.SelectedThemeId;
 
             // スプールディレクトリとメタデータの初期化
             var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name);
@@ -277,70 +286,9 @@ public class RecordingWorkflowService
 
             var appConfig = _configService.LoadConfig();
 
-            // 3. Whisper 自動文字起こし (設定有効時)
-            WhisperTranscribeResult? whisperResult = null;
-            if (appConfig.Whisper.AutoTranscribeOnStop && appConfig.Whisper.IsConfigured && !string.IsNullOrEmpty(targetAudioPath))
-            {
-                if (metadata != null)
-                {
-                    metadata.Pipeline.Transcribe = "running";
-                    metadata.Pipeline.LastStep = "transcribe";
-                    _spoolService.UpdateMetadata(metadata);
-                }
-
-                PipelineProgress?.Invoke("transcribe", "Whisperで文字起こしを実行中...");
-                whisperResult = await _whisperService.TranscribeAudioAsync(targetAudioPath, appConfig.Whisper);
-                if (whisperResult.Success && metadata != null)
-                {
-                    metadata.Pipeline.Transcribe = "success";
-                    _spoolService.UpdateMetadata(metadata);
-                }
-                else if (metadata != null)
-                {
-                    metadata.Pipeline.Transcribe = "error";
-                    metadata.Pipeline.ErrorMessage = whisperResult.Message;
-                    _spoolService.UpdateMetadata(metadata);
-                    PipelineFailed?.Invoke("transcribe", whisperResult.Message);
-                }
-            }
-            else if (metadata != null)
-            {
-                metadata.Pipeline.Transcribe = "skipped";
-                _spoolService.UpdateMetadata(metadata);
-            }
-
-            // 4. AI 議事録自動作成 (文字起こし成功、または既存transcriptがあり、設定有効時)
-            AiExecutionResult? aiResult = null;
-            if (appConfig.Ai.AutoGenerateMinutes && metadata != null && (metadata.HasTranscript || whisperResult?.Success == true))
-            {
-                metadata.Pipeline.Minutes = "running";
-                metadata.Pipeline.LastStep = "minutes";
-                _spoolService.UpdateMetadata(metadata);
-
-                PipelineProgress?.Invoke("minutes", $"AIで議事録を自動生成中 ({appConfig.Ai.Engine})...");
-                aiResult = await _aiService.GenerateMinutesAsync(metadata, appConfig.Ai, whisperResult?.Response);
-                if (aiResult.Success)
-                {
-                    metadata.Pipeline.Minutes = "success";
-                    _spoolService.UpdateMetadata(metadata);
-                }
-                else
-                {
-                    metadata.Pipeline.Minutes = "error";
-                    metadata.Pipeline.ErrorMessage = aiResult.Message;
-                    _spoolService.UpdateMetadata(metadata);
-                    PipelineFailed?.Invoke("minutes", aiResult.Message);
-                }
-            }
-            else if (metadata != null)
-            {
-                metadata.Pipeline.Minutes = "skipped";
-                _spoolService.UpdateMetadata(metadata);
-            }
-
-            // 5. GitLab 自動アップロード (設定有効時)
-            GitLabUploadResult? gitLabResult = null;
-            if (appConfig.GitLab.AutoUploadOnStop && appConfig.GitLab.IsConfigured && !string.IsNullOrEmpty(stoppingSessionDir))
+            // 3. Box 自動一括アップロード (メインパイプライン)
+            BoxUploadResult? boxResult = null;
+            if (appConfig.Box.AutoUploadOnStop && appConfig.Box.IsAuthenticated && !string.IsNullOrEmpty(stoppingSessionDir))
             {
                 if (metadata != null)
                 {
@@ -349,24 +297,27 @@ public class RecordingWorkflowService
                     _spoolService.UpdateMetadata(metadata);
                 }
 
-                PipelineProgress?.Invoke("upload", "GitLabへ会議記録を一括アップロード中...");
-                gitLabResult = await _gitLabService.UploadSessionAsync(
+                PipelineProgress?.Invoke("upload", "Boxへ会議記録の一括アップロードを開始します...");
+                boxResult = await _boxService.UploadSessionAsync(
                     stoppingSessionDir, 
-                    appConfig.GitLab, 
-                    metadata, 
-                    deleteOnSuccess: true);
+                    metadata!, 
+                    _selectedThemeId, 
+                    onProgress: (cur, total, file) =>
+                    {
+                        PipelineProgress?.Invoke("upload", $"Boxへアップロード中: {cur}/{total} ({file})");
+                    });
 
-                if (gitLabResult.Success && metadata != null)
+                if (boxResult.Success && metadata != null)
                 {
                     metadata.Pipeline.Upload = "success";
-                    PipelineCompleted?.Invoke("会議記録の保存とGitLabへのアップロードが完了しました。");
+                    PipelineCompleted?.Invoke("会議記録のBoxへのアップロードが完了しました！");
                 }
                 else if (metadata != null)
                 {
                     metadata.Pipeline.Upload = "error";
-                    metadata.Pipeline.ErrorMessage = gitLabResult.Message;
+                    metadata.Pipeline.ErrorMessage = boxResult.Message;
                     _spoolService.UpdateMetadata(metadata);
-                    PipelineFailed?.Invoke("upload", gitLabResult.Message);
+                    PipelineFailed?.Invoke("upload", boxResult.Message);
                 }
             }
             else if (metadata != null)
@@ -383,9 +334,10 @@ public class RecordingWorkflowService
                 _audioEngine.CurrentOutputFile,
                 _screenEngine.CapturedCount,
                 mp3Result,
-                whisperResult,
-                aiResult,
-                gitLabResult,
+                null,
+                null,
+                null,
+                boxResult,
                 metadata?.Pipeline);
         }
         catch (Exception ex)
