@@ -4,6 +4,7 @@ using WinMeetingRecorder.Audio;
 using WinMeetingRecorder.Box;
 using WinMeetingRecorder.Config;
 using WinMeetingRecorder.GitLab;
+using WinMeetingRecorder.Logging;
 using WinMeetingRecorder.Screen;
 using WinMeetingRecorder.Spool;
 using WinMeetingRecorder.Whisper;
@@ -328,7 +329,8 @@ public class RecordingWorkflowService
 
                 UpdateProgress("recording", "記録中", 0);
 
-                Console.WriteLine($"[Workflow] 🎙️ 会議記録を開始しました: セッション {session.SessionId} (スリープ抑止: ON)");
+                var themeName = _configService.LoadConfig().Box.ThemesCache.FirstOrDefault(t => t.Id == _selectedThemeId)?.Name ?? _selectedThemeId ?? "既定";
+                AppLogger.Info($"🎙️ 会議記録を開始しました (テーマ: {themeName} / セッション: {session.SessionId})");
                 RecordingStarted?.Invoke(session.SessionId);
 
                 return Task.FromResult(new RecordingStartResult(
@@ -454,7 +456,12 @@ public class RecordingWorkflowService
             {
                 return null;
             }
-            return _screenEngine.CaptureManual();
+            var ev = _screenEngine.CaptureManual();
+            if (ev != null)
+            {
+                AppLogger.Info($"📸 手動スクリーンショットを撮影しました (通算 {_screenEngine.CapturedCount} 枚目)");
+            }
+            return ev;
         }
     }
 
@@ -496,6 +503,7 @@ public class RecordingWorkflowService
 
             if (stoppingSessionId != null)
             {
+                AppLogger.Info($"⏹️ 会議記録を停止しました (セッション: {stoppingSessionId} / スクショ: {_screenEngine.CapturedCount}枚)");
                 RecordingStopped?.Invoke(stoppingSessionId);
             }
 
@@ -514,6 +522,10 @@ public class RecordingWorkflowService
                     PipelineProgress?.Invoke("audio", "WAV音声をMP3へ高圧縮中...");
                     mp3Result = AudioConverter.ConvertWavToMp3(wavPath, mp3Path, targetSampleRate: 24000, targetChannels: 1, desiredBitRate: 64000);
                     targetAudioPath = mp3Result.Success ? mp3Path : wavPath;
+                    if (mp3Result.Success)
+                    {
+                        AppLogger.Info($"🎵 WAV音声をMP3へ高圧縮完了: {mp3Result.CompressedSizeBytes / 1024.0:F1} KB (圧縮率 {mp3Result.CompressionRatioPercent:F1}%)");
+                    }
                 }
             }
 
@@ -587,6 +599,7 @@ public class RecordingWorkflowService
                 _spoolService.UpdateMetadata(metadata);
                 UpdateProgress("completed", "会議記録をローカルに保管しました（アップロード保留）。", 100);
                 PipelineCompleted?.Invoke("会議記録のローカル保存が完了しました。");
+                AppLogger.Info($"📁 会議記録をローカルに保管しました (未送信スプールに保持 / セッション: {stoppingSessionId})");
             }
 
             return new RecordingStopResult(

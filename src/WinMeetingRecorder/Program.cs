@@ -9,6 +9,7 @@ using WinMeetingRecorder.Audio;
 using WinMeetingRecorder.Box;
 using WinMeetingRecorder.Config;
 using WinMeetingRecorder.GitLab;
+using WinMeetingRecorder.Logging;
 using WinMeetingRecorder.Screen;
 using WinMeetingRecorder.Spool;
 using WinMeetingRecorder.Tray;
@@ -1057,6 +1058,20 @@ public static class Program
                 return Results.Ok(new { message = $"セッション {sessionId} を削除しました。" });
             }
             return Results.NotFound(new { error = $"指定されたセッションが見つからないか削除できませんでした: {sessionId}" });
+        });
+
+        // API: 直近の動作ログ一覧取得
+        app.MapGet("/api/logs", (int? limit) =>
+        {
+            var logs = AppLogger.GetRecentLogs(limit ?? 150);
+            return Results.Ok(logs);
+        });
+
+        // API: ログのクリア
+        app.MapDelete("/api/logs", () =>
+        {
+            AppLogger.ClearMemoryLogs();
+            return Results.Ok(new { message = "ログをクリアしました。" });
         });
 
         // API: アプリケーションの安全なシャットダウン (トレイ連携)

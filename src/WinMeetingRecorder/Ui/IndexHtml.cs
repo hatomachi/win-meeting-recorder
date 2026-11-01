@@ -218,6 +218,28 @@ public static class IndexHtml
       </div>
     </div>
 
+    <!-- 動作ログ ＆ Box格納履歴ビュー -->
+    <div class="border border-slate-700/60 rounded-xl bg-slate-950/20 p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
+          <span>📜</span>
+          <span>動作ログ ＆ Box格納履歴</span>
+        </span>
+        <div class="flex items-center space-x-3 text-[11px] text-slate-400">
+          <label class="flex items-center space-x-1 cursor-pointer select-none">
+            <input type="checkbox" id="autoScrollLogs" checked class="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0">
+            <span>最下部追従</span>
+          </label>
+          <button id="refreshLogsBtn" class="hover:text-slate-200">🔄 更新</button>
+          <button id="clearLogsBtn" class="hover:text-rose-300">🗑️ クリア</button>
+        </div>
+      </div>
+      <div id="logConsole" class="w-full h-52 bg-slate-950/90 rounded-lg border border-slate-800 p-2.5 font-mono text-[11px] leading-relaxed overflow-y-auto space-y-1 text-slate-300 select-text">
+        <div class="text-slate-500 text-[10px]">ログ取得中...</div>
+      </div>
+      <p class="text-[10px] text-slate-500">※ 上にスクロールすると、本日格納された会議やBoxフォルダリンク（🔗）を確認できます。</p>
+    </div>
+
   </div>
 
   <script>
@@ -268,6 +290,13 @@ public static class IndexHtml
     const pendingList = document.getElementById('pendingList');
     const refreshPendingBtn = document.getElementById('refreshPendingBtn');
 
+    // ログ UI
+    const logConsole = document.getElementById('logConsole');
+    const autoScrollLogs = document.getElementById('autoScrollLogs');
+    const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+    const clearLogsBtn = document.getElementById('clearLogsBtn');
+    let lastLogJson = '';
+
     let isRecording = false;
     let timerInterval = null;
     let startTime = null;
@@ -301,6 +330,7 @@ public static class IndexHtml
       await loadConfig();
       await loadBoxStatus();
       await loadPendingSessions();
+      await loadLogs();
       startPollingStatus();
     }
 
@@ -626,6 +656,7 @@ public static class IndexHtml
       } finally {
         recordBtn.disabled = false;
         await loadPendingSessions();
+        await loadLogs();
       }
     }
 
@@ -635,6 +666,7 @@ public static class IndexHtml
         if (res.ok) {
           const current = parseInt(shotCountText.textContent.replace(/[^0-9]/g, '') || '0', 10);
           shotCountText.textContent = `撮影: ${current + 1} 枚`;
+          setTimeout(loadLogs, 300);
         }
       } catch (err) {
         console.error('スクショ撮影エラー:', err);
@@ -682,8 +714,14 @@ public static class IndexHtml
       const healthDeviceSummary = document.getElementById('healthDeviceSummary');
       const healthWarningBanner = document.getElementById('healthWarningBanner');
       const healthWarningText = document.getElementById('healthWarningText');
+      let pollCount = 0;
 
       setInterval(async () => {
+        pollCount++;
+        if (pollCount % 4 === 0) {
+          loadLogs();
+        }
+
         try {
           const res = await fetch('/api/status');
           if (!res.ok) return;
@@ -815,6 +853,7 @@ public static class IndexHtml
             boxFolderLink.href = data.folderUrl;
           }
           await loadPendingSessions();
+          await loadLogs();
           setTimeout(() => {
             uploadProgressContainer.classList.add('hidden');
           }, 5000);
@@ -839,6 +878,76 @@ public static class IndexHtml
     };
 
     refreshPendingBtn.addEventListener('click', loadPendingSessions);
+
+    // 動作ログ ＆ Box格納履歴の整形と取得
+    function formatLogLine(line) {
+      let cls = 'text-slate-400';
+      let bg = '';
+      
+      // 【Box格納完了】は太字・鮮やかなエメラルドグリーン＆薄緑背景で超目立つ
+      if (line.includes('【Box格納完了】')) {
+        cls = 'text-emerald-300 font-bold';
+        bg = 'bg-emerald-950/60 border border-emerald-800/80 px-1.5 py-0.5 rounded my-0.5';
+      } else if (line.includes('❌') || line.includes('エラー') || line.includes('FAIL')) {
+        cls = 'text-rose-400 font-semibold';
+        bg = 'bg-rose-950/30 px-1 rounded';
+      } else if (line.includes('⚠️') || line.includes('警告') || line.includes('WARN')) {
+        cls = 'text-amber-400';
+      } else if (line.includes('🎙️') || line.includes('⏹️')) {
+        cls = 'text-sky-300 font-medium';
+      } else if (line.includes('🚀') || line.includes('⭐')) {
+        cls = 'text-blue-300';
+      } else if (line.includes('📸')) {
+        cls = 'text-purple-300';
+      } else if (line.includes('🔗')) {
+        cls = 'text-indigo-300 font-semibold';
+      }
+
+      const escaped = line
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      
+      const linked = escaped.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" class="text-indigo-400 hover:text-indigo-300 underline font-semibold">$1 ↗</a>');
+
+      return `<div class="${cls} ${bg} break-all">${linked}</div>`;
+    }
+
+    async function loadLogs() {
+      try {
+        const res = await fetch('/api/logs?limit=150');
+        if (!res.ok) return;
+        const logs = await res.json();
+        const jsonStr = JSON.stringify(logs);
+        if (jsonStr === lastLogJson) return;
+        lastLogJson = jsonStr;
+
+        if (!logs || logs.length === 0) {
+          logConsole.innerHTML = '<div class="text-slate-500 text-[10px]">ログはありません。</div>';
+          return;
+        }
+
+        logConsole.innerHTML = logs.map(formatLogLine).join('');
+
+        if (autoScrollLogs.checked) {
+          logConsole.scrollTop = logConsole.scrollHeight;
+        }
+      } catch (err) {
+        console.error('ログ取得エラー:', err);
+      }
+    }
+
+    refreshLogsBtn.addEventListener('click', loadLogs);
+    clearLogsBtn.addEventListener('click', async () => {
+      if (!confirm('メモリ上のログをクリアしますか？')) return;
+      try {
+        await fetch('/api/logs', { method: 'DELETE' });
+        lastLogJson = '';
+        await loadLogs();
+      } catch (err) {
+        console.error('ログクリアエラー:', err);
+      }
+    });
 
     // アプリ終了ボタン
     shutdownBtn.addEventListener('click', async () => {

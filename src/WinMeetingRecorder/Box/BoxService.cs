@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using WinMeetingRecorder.Config;
+using WinMeetingRecorder.Logging;
 using WinMeetingRecorder.Spool;
 
 namespace WinMeetingRecorder.Box;
@@ -702,17 +703,18 @@ public class BoxService
 
         if (theme == null || string.IsNullOrWhiteSpace(theme.BoxFolderId))
         {
+            AppLogger.Error("Boxアップロード失敗: アップロード先となる会議テーマ（BoxフォルダID）が未設定です。");
             return new BoxUploadResult(false, "アップロード先となる会議テーマ（BoxフォルダID）が未設定です。");
         }
 
-        Console.WriteLine($"[BoxService] 🚀 Box への一括アップロードを開始します (テーマ: {theme.Name}, 親フォルダ: {theme.BoxFolderId})");
+        AppLogger.Info($"🚀 Boxへの一括アップロードを開始します (テーマ: {theme.Name}, 親フォルダ: {theme.BoxFolderId})");
 
         try
         {
             // 1. セッションフォルダをBox上に作成 (例: 20261031_214500_abcd1234)
             var sessionFolderName = metadata.SessionId;
             var boxFolderId = await CreateSessionFolderAsync(theme.BoxFolderId, sessionFolderName);
-            Console.WriteLine($"[BoxService] 📁 セッションフォルダ作成完了: {sessionFolderName} (Box Folder ID: {boxFolderId})");
+            AppLogger.Info($"📁 セッションフォルダ作成完了: {sessionFolderName} (Box Folder ID: {boxFolderId})");
 
             // 2. アップロード対象ファイルのリストアップ
             var uploadFiles = new List<(string LocalPath, string RemoteName)>();
@@ -788,26 +790,30 @@ public class BoxService
             // 5. ★一番最後に meta.json をアップロード (後段サーバーの完了検知トリガー)
             current++;
             onProgress?.Invoke(current, totalFiles, "meta.json");
-            Console.WriteLine($"[BoxService] ⭐ [最終トリガー] meta.json をアップロード中 ({current}/{totalFiles})...");
+            AppLogger.Info($"⭐ [最終トリガー] meta.json をアップロード中 ({current}/{totalFiles})...");
             await UploadFileAsync(boxFolderId, metaJsonPath, "meta.json");
 
-            Console.WriteLine($"[BoxService] 🎉 全{totalFiles}件のファイルをBoxへアップロード完了しました！");
-
             // 6. 二重安全確認: Box API でフォルダ内の全ファイルを再取得し、実在・サイズを厳格に検証
-            Console.WriteLine($"[BoxService] 🔍 [二重安全確認] Box APIで全ファイルの実在を検証中 (Folder ID: {boxFolderId})...");
+            AppLogger.Info($"🔍 [二重安全確認] Box APIで全ファイルの実在を検証中 (Folder ID: {boxFolderId})...");
             var expectedNames = uploadFiles.Select(f => f.RemoteName).Append("meta.json").ToList();
             await VerifyFolderFilesAsync(boxFolderId, expectedNames);
-            Console.WriteLine($"[BoxService] ✅ Box上の全{expectedNames.Count}件の実在を確認完了！安全にスプールを消去します。");
+
+            var folderUrl = $"https://app.box.com/folder/{boxFolderId}";
+            var startTimeDisplay = metadata.StartTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+            // ★目立つログ出力（日時・テーマ・ファイル数・Boxリンク）
+            AppLogger.Info($"✅ 【Box格納完了】テーマ: {theme.Name} ｜ {startTimeDisplay} 会議 (計{totalFiles}ファイル)");
+            AppLogger.Info($"🔗 Boxフォルダ: {folderUrl}");
 
             // 7. 実在確認完了後のみ、ローカルスプール一時ファイルを自動クリーンアップ
             TryCleanupSpoolFiles(sessionDir);
+            AppLogger.Info($"🧹 ローカルスプール一時ファイルを安全に消去しました: {sessionFolderName}");
 
-            var folderUrl = $"https://app.box.com/folder/{boxFolderId}";
             return new BoxUploadResult(true, "Box への全件アップロードおよび実在検証が完了しました。", boxFolderId, folderUrl);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BoxService] ❌ Box アップロード失敗 (スプールは安全に保持されます): {ex.Message}");
+            AppLogger.Error($"❌ Box アップロード失敗 (スプールは安全に保持されます): {ex.Message}");
             return new BoxUploadResult(false, $"Box アップロード失敗: {ex.Message}");
         }
     }
