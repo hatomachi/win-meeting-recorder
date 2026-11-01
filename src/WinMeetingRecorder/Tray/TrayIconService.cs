@@ -104,11 +104,43 @@ public class TrayIconService : IDisposable
             }
         });
 
-        _stopItem = new ToolStripMenuItem("⏹️ 記録を停止 (Boxへ自動アップロード)", null, async (s, e) =>
+        _stopItem = new ToolStripMenuItem("⏹️ 記録を停止...", null, async (s, e) =>
         {
+            var authStatus = _boxService.GetAuthStatus();
+            string themeName = !string.IsNullOrEmpty(authStatus.ActiveThemeName)
+                ? authStatus.ActiveThemeName
+                : "未設定";
+
+            var dialogResult = MessageBox.Show(
+                $"会議記録を停止し、Boxへアップロードしますか？\n\n" +
+                $"📁 保存先テーマ: 【{themeName}】\n\n" +
+                $"・[はい]: このテーマで停止し、Boxへアップロードします。\n" +
+                $"・[いいえ]: アップロードを保留し、ローカルに保管します。\n" +
+                $"  (後でWeb操作盤からテーマ変更して送信、または次の録音をすぐ開始できます)\n" +
+                $"・[キャンセル]: 録音をそのまま継続します。",
+                "WinMeetingRecorder - 記録停止確認",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question);
+
+            if (dialogResult == DialogResult.Cancel)
+            {
+                return;
+            }
+
+            bool autoUpload = (dialogResult == DialogResult.Yes);
+
             if (s is ToolStripMenuItem item) item.Enabled = false;
-            ShowBalloon("⏹️ 記録停止", "会議記録を停止しました。MP3変換とBoxへの自動アップロードを実行中...", ToolTipIcon.Info);
-            var res = await _workflow.StopRecordingAsync();
+
+            if (autoUpload)
+            {
+                ShowBalloon("⏹️ 記録停止", $"テーマ「{themeName}」でBoxへのアップロードを開始します...", ToolTipIcon.Info);
+            }
+            else
+            {
+                ShowBalloon("⏸️ 記録停止（保留）", "録音を停止しローカルに保管しました。Web操作盤からいつでもテーマを選んで送信できます。", ToolTipIcon.Info);
+            }
+
+            var res = await _workflow.StopRecordingAsync(autoUpload);
             if (!res.Success)
             {
                 ShowBalloon("⚠️ 停止エラー", res.Message, ToolTipIcon.Warning);

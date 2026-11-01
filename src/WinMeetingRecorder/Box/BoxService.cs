@@ -42,6 +42,7 @@ public class BoxService
 
     public event Action<BoxAuthStatus>? AuthStatusChanged;
     public event Action<List<MeetingTheme>>? ThemesUpdated;
+    public event Action<string>? ThemeSelected;
 
     public BoxService(ConfigService configService)
     {
@@ -434,6 +435,7 @@ public class BoxService
             appConfig.Box.SelectedThemeName = theme.Name;
             _configService.SaveConfig(appConfig);
             AuthStatusChanged?.Invoke(GetAuthStatus());
+            ThemeSelected?.Invoke(theme.Id);
             Console.WriteLine($"[BoxService] 会議テーマを切り替えました: {theme.Name} ({theme.Id})");
         }
     }

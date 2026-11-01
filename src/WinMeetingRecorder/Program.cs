@@ -987,9 +987,11 @@ public static class Program
         });
 
         // API: 録音停止 ＆ パイプライン自動化 (ワークフロー統合)
-        app.MapPost("/api/record/stop", async (RecordingWorkflowService workflow) =>
+        app.MapPost("/api/record/stop", async (
+            RecordingWorkflowService workflow, 
+            RecordStopRequest? req) =>
         {
-            var res = await workflow.StopRecordingAsync();
+            var res = await workflow.StopRecordingAsync(req?.AutoUpload, req?.ThemeId);
             if (!res.Success)
             {
                 return Results.BadRequest(new { error = res.Message });
@@ -1005,6 +1007,7 @@ public static class Program
                 whisperTranscription = res.WhisperTranscription,
                 aiMinutes = res.AiMinutes,
                 gitLabUpload = res.GitLabUpload,
+                boxUpload = res.BoxUpload,
                 pipeline = res.Pipeline
             });
         });
@@ -1158,6 +1161,10 @@ public record RecordStartRequest(
     string? CaptureDeviceId, 
     int? MonitorIndex, 
     bool? EnableScreenCapture,
+    string? ThemeId = null);
+
+public record RecordStopRequest(
+    bool? AutoUpload = null, 
     string? ThemeId = null);
 
 public record BoxSelectThemeRequest(string ThemeId);

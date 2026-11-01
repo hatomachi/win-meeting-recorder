@@ -118,6 +118,26 @@ public class RecordingWorkflowService
         }
     }
 
+    public string? SelectedThemeId
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _selectedThemeId;
+            }
+        }
+    }
+
+    public void UpdateSelectedTheme(string themeId)
+    {
+        lock (_lock)
+        {
+            _selectedThemeId = themeId;
+            Console.WriteLine($"[Workflow] 録音セッションの選択テーマを更新しました: {themeId}");
+        }
+    }
+
     public TimeSpan ElapsedTime
     {
         get
@@ -173,6 +193,12 @@ public class RecordingWorkflowService
         _whisperService = whisperService;
         _aiService = aiService;
         _configService = configService;
+
+        // 会議テーマ切り替えイベントの連携
+        _boxService.ThemeSelected += themeId =>
+        {
+            UpdateSelectedTheme(themeId);
+        };
 
         // 画面キャプチャイベントの連携
         _screenEngine.OnCaptured += evt =>
@@ -435,7 +461,7 @@ public class RecordingWorkflowService
     /// <summary>
     /// 記録を停止し、自動パイプライン (MP3化 -> Boxアップロード) を実行する
     /// </summary>
-    public async Task<RecordingStopResult> StopRecordingAsync()
+    public async Task<RecordingStopResult> StopRecordingAsync(bool? autoUpload = null, string? overrideThemeId = null)
     {
         string? stoppingSessionId;
         string? stoppingSessionDir;
@@ -506,9 +532,16 @@ public class RecordingWorkflowService
 
             var appConfig = _configService.LoadConfig();
 
-            // 3. Box 自動一括アップロード (メインパイプライン)
+            // 3. テーマの解決 (明示指定 > セッション最新選択 > 設定ファイルの既定)
+            string? effectiveThemeId = !string.IsNullOrWhiteSpace(overrideThemeId) 
+                ? overrideThemeId 
+                : (_selectedThemeId ?? appConfig.Box.SelectedThemeId);
+
+            // 4. Box アップロード判定
+            bool shouldUpload = autoUpload ?? appConfig.Box.AutoUploadOnStop;
             BoxUploadResult? boxResult = null;
-            if (appConfig.Box.AutoUploadOnStop && appConfig.Box.IsAuthenticated && !string.IsNullOrEmpty(stoppingSessionDir))
+
+            if (shouldUpload && appConfig.Box.IsAuthenticated && !string.IsNullOrEmpty(stoppingSessionDir))
             {
                 if (metadata != null)
                 {
@@ -522,7 +555,7 @@ public class RecordingWorkflowService
                 boxResult = await _boxService.UploadSessionAsync(
                     stoppingSessionDir, 
                     metadata!, 
-                    _selectedThemeId, 
+                    effectiveThemeId, 
                     onProgress: (cur, total, file) =>
                     {
                         int pct = 40 + (int)((double)cur / Math.Max(1, total) * 55);
@@ -552,7 +585,7 @@ public class RecordingWorkflowService
             {
                 metadata.Pipeline.Upload = "skipped";
                 _spoolService.UpdateMetadata(metadata);
-                UpdateProgress("completed", "会議記録のローカル保存が完了しました。", 100);
+                UpdateProgress("completed", "会議記録をローカルに保管しました（アップロード保留）。", 100);
                 PipelineCompleted?.Invoke("会議記録のローカル保存が完了しました。");
             }
 

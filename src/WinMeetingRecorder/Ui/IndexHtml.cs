@@ -545,6 +545,19 @@ public static class IndexHtml
     }
 
     async function stopRecording() {
+      const selectedOption = themeSelect.options[themeSelect.selectedIndex];
+      const currentThemeName = selectedOption ? selectedOption.text : '未設定';
+      const currentThemeId = themeSelect.value || null;
+
+      const confirmMsg =
+        `会議記録を停止し、Boxへアップロードしますか？\n\n` +
+        `📁 保存先テーマ: 【${currentThemeName}】\n\n` +
+        `・[OK]: このテーマで停止し、Boxへ自動アップロードします。\n` +
+        `・[キャンセル]: アップロードを保留し、ローカルに保管します。\n` +
+        `  (テーマを変更して下の『未送信スプール』からBox送信するか、次の録音をすぐに開始できます)`;
+
+      const doUpload = confirm(confirmMsg);
+
       // 1. 即座にタイマー停止＆ボタン無効化
       if (timerInterval) {
         clearInterval(timerInterval);
@@ -566,13 +579,28 @@ public static class IndexHtml
         uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
         uploadSuccessMessage.classList.add('hidden');
 
-        const res = await fetch('/api/record/stop', { method: 'POST' });
+        const res = await fetch('/api/record/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            autoUpload: doUpload,
+            themeId: currentThemeId
+          })
+        });
         const data = await res.json();
 
         updateRecordingUI(false);
 
         if (res.ok) {
-          if (data.boxUpload && data.boxUpload.success) {
+          if (!doUpload) {
+            uploadProgressBar.style.width = '100%';
+            uploadProgressBar.className = 'bg-amber-500 h-2.5 rounded-full';
+            uploadStatusText.textContent = '⏸️ アップロードを保留し、ローカルに保管しました。';
+            uploadCountBadge.textContent = '保留 (スプール保管)';
+            setTimeout(() => {
+              uploadProgressContainer.classList.add('hidden');
+            }, 6000);
+          } else if (data.boxUpload && data.boxUpload.success) {
             uploadProgressBar.style.width = '100%';
             uploadStatusText.textContent = '✅ Boxへの一括アップロード完了！';
             uploadCountBadge.textContent = '完了';
@@ -583,6 +611,10 @@ public static class IndexHtml
           } else if (data.boxUpload && !data.boxUpload.success) {
             uploadStatusText.textContent = `⚠️ Boxアップロードエラー: ${data.boxUpload.message}`;
             uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+          } else {
+            uploadProgressBar.style.width = '100%';
+            uploadStatusText.textContent = '✅ ローカル保存が完了しました。';
+            uploadCountBadge.textContent = '完了';
           }
         } else {
           uploadStatusText.textContent = `❌ 停止処理エラー: ${data.error}`;
@@ -749,7 +781,17 @@ public static class IndexHtml
     }
 
     window.manualUploadBox = async function(sessionId) {
-      if (!confirm(`セッション ${sessionId} を Box へアップロードしますか？`)) return;
+      const selectedOption = themeSelect.options[themeSelect.selectedIndex];
+      const currentThemeName = selectedOption ? selectedOption.text : '未設定';
+      const currentThemeId = themeSelect.value || null;
+
+      const confirmMsg =
+        `セッション ${sessionId} をBoxへアップロードしますか？\n\n` +
+        `📁 保存先テーマ: 【${currentThemeName}】\n\n` +
+        `※ テーマが異なる場合は「キャンセル」を押し、上の会議テーマ選択を変更してから再度押してください。`;
+
+      if (!confirm(confirmMsg)) return;
+
       uploadProgressContainer.classList.remove('hidden');
       uploadSuccessMessage.classList.add('hidden');
       uploadStatusText.textContent = `Boxへアップロード準備中: ${sessionId}`;
@@ -761,7 +803,7 @@ public static class IndexHtml
         const res = await fetch('/api/box/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, themeId: themeSelect.value || null })
+          body: JSON.stringify({ sessionId, themeId: currentThemeId })
         });
         const data = await res.json();
         if (data.success) {
