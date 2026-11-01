@@ -93,8 +93,14 @@ public class BoxService
             throw new InvalidOperationException($"認証用コールバックリスナー(ポート{CallbackPort})の起動に失敗しました: {ex.Message}", ex);
         }
 
-        // 認可URLをブラウザでオープン
-        var authorizeUrl = $"https://account.box.com/api/oauth2/authorize?response_type=code&client_id={Uri.EscapeDataString(boxConfig.ClientId)}&redirect_uri={Uri.EscapeDataString(RedirectUri)}";
+        // 認可URLをブラウザでオープン (独自ドメイン・企業SSO対応)
+        var authHost = boxConfig.GetAuthHost();
+        var subdomain = boxConfig.GetSubdomain();
+        var authorizeUrl = $"https://{authHost}/api/oauth2/authorize?response_type=code&client_id={Uri.EscapeDataString(boxConfig.ClientId)}&redirect_uri={Uri.EscapeDataString(RedirectUri)}";
+        if (!string.IsNullOrEmpty(subdomain))
+        {
+            authorizeUrl += $"&box_subdomain={Uri.EscapeDataString(subdomain)}";
+        }
         
         try
         {
@@ -798,7 +804,7 @@ public class BoxService
             var expectedNames = uploadFiles.Select(f => f.RemoteName).Append("meta.json").ToList();
             await VerifyFolderFilesAsync(boxFolderId, expectedNames);
 
-            var folderUrl = $"https://app.box.com/folder/{boxFolderId}";
+            var folderUrl = boxConfig.GetFolderUrl(boxFolderId);
             var startTimeDisplay = metadata.StartTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
 
             // ★目立つログ出力（日時・テーマ・ファイル数・Boxリンク）

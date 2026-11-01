@@ -179,6 +179,10 @@ public static class IndexHtml
           <input type="text" id="boxSharedFolderId" placeholder="例: 433029580764 (URL末尾の数字)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
         </div>
         <div>
+          <label class="block text-slate-400 mb-1">企業・独自ドメイン (任意・SSOログイン用)</label>
+          <input type="text" id="boxDomain" placeholder="例: mycompany.app.box.com または mycompany (未設定時は標準)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
           <label class="block text-slate-400 mb-1">Developer Token (開発テスト用・任意)</label>
           <div class="relative">
             <input type="password" id="boxDevToken" placeholder="一時テスト用トークン (OAuth未完了時の検証用)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500 pr-16">
@@ -270,6 +274,7 @@ public static class IndexHtml
     const boxClientId = document.getElementById('boxClientId');
     const boxClientSecret = document.getElementById('boxClientSecret');
     const boxSharedFolderId = document.getElementById('boxSharedFolderId');
+    const boxDomain = document.getElementById('boxDomain');
     const boxDevToken = document.getElementById('boxDevToken');
     const boxAutoUpload = document.getElementById('boxAutoUpload');
     const startBoxLoginBtn = document.getElementById('startBoxLoginBtn');
@@ -389,6 +394,7 @@ public static class IndexHtml
           boxClientId.value = cfg.box.clientId || '';
           boxClientSecret.value = cfg.box.clientSecret || '';
           boxSharedFolderId.value = cfg.box.sharedFolderId || '433029580764';
+          boxDomain.value = cfg.box.domain || '';
           boxDevToken.value = cfg.box.developerToken || '';
           boxAutoUpload.checked = cfg.box.autoUploadOnStop !== false;
         }
@@ -510,6 +516,7 @@ public static class IndexHtml
       cfg.box.clientId = boxClientId.value.trim();
       cfg.box.clientSecret = boxClientSecret.value.trim();
       cfg.box.sharedFolderId = boxSharedFolderId.value.trim() || '433029580764';
+      cfg.box.domain = boxDomain.value.trim();
       cfg.box.developerToken = boxDevToken.value.trim();
       cfg.box.autoUploadOnStop = boxAutoUpload.checked;
 

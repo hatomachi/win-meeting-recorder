@@ -53,6 +53,12 @@ public class BoxConfig
     public string SharedFolderId { get; set; } = "433029580764";
 
     /// <summary>
+    /// 会社のカスタムBoxドメインまたはサブドメイン (例: "mycompany", "mycompany.app.box.com", "mycompany.box.com")
+    /// 空の場合は標準の Box ドメイン ("account.box.com" / "app.box.com") を使用
+    /// </summary>
+    public string Domain { get; set; } = "";
+
+    /// <summary>
     /// 現在選択されている会議テーマID
     /// </summary>
     public string SelectedThemeId { get; set; } = "";
@@ -85,4 +91,45 @@ public class BoxConfig
     public bool IsAuthenticated =>
         !string.IsNullOrWhiteSpace(DeveloperToken) ||
         (!string.IsNullOrWhiteSpace(AccessToken) && (!TokenExpiresAt.HasValue || TokenExpiresAt.Value > DateTime.UtcNow));
+
+    /// <summary>
+    /// 抽出された企業サブドメイン (例: "mycompany")
+    /// </summary>
+    public string? GetSubdomain()
+    {
+        if (string.IsNullOrWhiteSpace(Domain)) return null;
+        var clean = Domain.Trim();
+        if (clean.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            clean = clean.Substring(8);
+        else if (clean.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            clean = clean.Substring(7);
+        clean = clean.TrimEnd('/');
+
+        // 例: "mycompany.app.box.com", "mycompany.account.box.com", "mycompany.box.com"
+        var parts = clean.Split('.');
+        if (parts.Length > 1)
+        {
+            return parts[0];
+        }
+        return clean;
+    }
+
+    /// <summary>
+    /// OAuth 認可画面のホスト名 (例: "mycompany.account.box.com" または "account.box.com")
+    /// </summary>
+    public string GetAuthHost()
+    {
+        var sub = GetSubdomain();
+        return string.IsNullOrEmpty(sub) ? "account.box.com" : $"{sub}.account.box.com";
+    }
+
+    /// <summary>
+    /// Box フォルダ閲覧URL (例: "https://mycompany.app.box.com/folder/{id}" または "https://app.box.com/folder/{id}")
+    /// </summary>
+    public string GetFolderUrl(string folderId)
+    {
+        var sub = GetSubdomain();
+        var host = string.IsNullOrEmpty(sub) ? "app.box.com" : $"{sub}.app.box.com";
+        return $"https://{host}/folder/{folderId}";
+    }
 }

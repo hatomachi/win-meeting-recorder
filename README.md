@@ -36,6 +36,7 @@
 ### ① Box OAuth 2.0 ユーザー認証基盤
 - 初回起動時や未認証時は、ローカル一時HTTPリスナー（`http://localhost:5001/callback`）を自動起動。
 - 既定のブラウザで Box 認可画面を自動オープンし、1クリックでログイン完了。
+- 企業の独自Boxドメイン（SSO認可画面・サブドメイン `box_subdomain`）および初期設定テンプレート（`config.default.json`）の同梱配布に対応。
 - 認可コードから `access_token` / `refresh_token` を取得し、ローカルに安全保存。
 - トークン有効期限切れ時の自動リフレッシュ（`grant_type=refresh_token`）を完備。
 

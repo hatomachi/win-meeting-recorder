@@ -14,6 +14,7 @@ echo "🚀 [1/3] ソースコードを Windows 検証機へ転送中..."
 ssh $WIN_HOST "if (!(Test-Path 'C:\work\src')) { New-Item -ItemType Directory -Path 'C:\work\src' -Force }"
 scp -r src/WinMeetingRecorder $WIN_HOST:C:/work/src/
 scp README_HOW_TO_USE.txt $WIN_HOST:C:/work/
+scp config.default.json $WIN_HOST:C:/work/
 
 echo "🔨 [2/3] Windows 実機上でローカル高速ビルド中 (dotnet publish)..."
 ssh $WIN_HOST "Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; C:\dotnet\dotnet.exe publish C:\work\src\WinMeetingRecorder\WinMeetingRecorder.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o C:\work"

@@ -42,7 +42,8 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item ./README_HOW_TO_USE.txt ./publish/
-          Compress-Archive -Path ./publish/WinMeetingRecorder.exe, ./publish/README_HOW_TO_USE.txt -DestinationPath ./publish/WinMeetingRecorder-win-x64.zip -Force
+          Copy-Item ./config.default.json ./publish/config.default.json
+          Compress-Archive -Path ./publish/WinMeetingRecorder.exe, ./publish/README_HOW_TO_USE.txt, ./publish/config.default.json -DestinationPath ./publish/WinMeetingRecorder-win-x64.zip -Force
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
@@ -63,6 +64,7 @@ jobs:
             - **ダウンロード**: 下記のアセット `WinMeetingRecorder-win-x64.zip` をクリックしてダウンロード（GitHubログイン不要）
             - **内容物**:
               - `WinMeetingRecorder.exe` (解凍してダブルクリックするだけでブラウザが自動起動)
+              - `config.default.json` (社内Box連携・共通フォルダ初期設定テンプレート)
               - `README_HOW_TO_USE.txt` (利用ガイド・操作方法)
             - **主な機能**:
               - スピーカー（相手の声）＋マイクの音割れなし自動ミキシング録音
