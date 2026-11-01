@@ -521,7 +521,8 @@ public static class Program
         app.MapPost("/api/box/upload", async (
             BoxUploadSessionRequest req,
             SpoolService spool,
-            BoxService boxService) =>
+            BoxService boxService,
+            RecordingWorkflowService workflow) =>
         {
             if (string.IsNullOrWhiteSpace(req.SessionId))
             {
@@ -540,7 +541,29 @@ public static class Program
                 return Results.BadRequest(new { error = "セッションメタデータの読み込みに失敗しました。" });
             }
 
-            var result = await boxService.UploadSessionAsync(sessionDir, metadata, req.ThemeId);
+            workflow.UpdateProgress("uploading", $"Boxへアップロード準備中: {req.SessionId}", 25);
+            var result = await boxService.UploadSessionAsync(
+                sessionDir, 
+                metadata, 
+                req.ThemeId,
+                onProgress: (cur, total, file) =>
+                {
+                    int pct = 25 + (int)((double)cur / Math.Max(1, total) * 70);
+                    string msg = file == "meta.json"
+                        ? "⭐ meta.json (完了トリガー) をアップロード中..."
+                        : $"Boxへアップロード中: {cur}/{total} ({file})";
+                    workflow.UpdateProgress("uploading", msg, pct, file);
+                });
+
+            if (result.Success)
+            {
+                workflow.UpdateProgress("completed", "✅ Boxへの一括アップロード完了！", 100);
+            }
+            else
+            {
+                workflow.UpdateProgress("error", $"❌ アップロード失敗: {result.Message}", 0);
+            }
+
             return Results.Ok(result);
         });
 
@@ -899,7 +922,8 @@ public static class Program
                 capturedCount = screenEngine.CapturedCount,
                 targetScreen = screenEngine.TargetScreen,
                 audioLevel = audioEngine.CurrentAudioLevel,
-                health = workflow.GetHealthStatus()
+                health = workflow.GetHealthStatus(),
+                pipeline = workflow.CurrentProgress
             });
         });
 

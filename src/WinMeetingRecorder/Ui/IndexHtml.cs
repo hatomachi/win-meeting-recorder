@@ -545,25 +545,37 @@ public static class IndexHtml
     }
 
     async function stopRecording() {
+      // 1. 即座にタイマー停止＆ボタン無効化
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+      isRecording = false;
       recordBtn.disabled = true;
-      recordBtnText.textContent = '停止中...';
+      recordBtnText.textContent = '停止・保存中...';
+      statusBadge.textContent = '⏹️ 保存処理中';
+      statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30';
+      screenshotBtn.disabled = true;
+      screenshotBtn.className = 'px-4 py-2.5 rounded-xl font-medium text-xs bg-slate-700 text-slate-400 transition flex items-center space-x-1 cursor-not-allowed';
+
       try {
         uploadProgressContainer.classList.remove('hidden');
         uploadStatusText.textContent = 'WAV音声をMP3へ高圧縮中...';
         uploadCountBadge.textContent = '処理中';
-        uploadProgressBar.style.width = '15%';
+        uploadProgressBar.style.width = '20%';
+        uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
         uploadSuccessMessage.classList.add('hidden');
 
         const res = await fetch('/api/record/stop', { method: 'POST' });
         const data = await res.json();
 
-        isRecording = false;
         updateRecordingUI(false);
 
         if (res.ok) {
           if (data.boxUpload && data.boxUpload.success) {
             uploadProgressBar.style.width = '100%';
             uploadStatusText.textContent = '✅ Boxへの一括アップロード完了！';
+            uploadCountBadge.textContent = '完了';
             uploadSuccessMessage.classList.remove('hidden');
             if (data.boxUpload.folderUrl) {
               boxFolderLink.href = data.boxUpload.folderUrl;
@@ -574,9 +586,11 @@ public static class IndexHtml
           }
         } else {
           uploadStatusText.textContent = `❌ 停止処理エラー: ${data.error}`;
+          uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
         }
       } catch (err) {
         uploadStatusText.textContent = `❌ 通信エラー: ${err.message}`;
+        uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
       } finally {
         recordBtn.disabled = false;
         await loadPendingSessions();
@@ -661,6 +675,28 @@ public static class IndexHtml
             shotCountText.textContent = `撮影: ${data.capturedCount} 枚`;
           }
 
+          // パイプライン進捗（アップロード進捗）のリアルタイム反映
+          if (data.pipeline) {
+            const p = data.pipeline;
+            if (p.phase === 'converting' || p.phase === 'uploading' || p.phase === 'verifying') {
+              uploadProgressContainer.classList.remove('hidden');
+              uploadStatusText.textContent = p.message || '処理中...';
+              uploadProgressBar.style.width = `${p.progressPercent || 20}%`;
+              uploadCountBadge.textContent = p.currentFile ? p.currentFile : '処理中';
+              uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
+            } else if (p.phase === 'completed') {
+              uploadProgressContainer.classList.remove('hidden');
+              uploadStatusText.textContent = p.message || '✅ アップロード完了！';
+              uploadProgressBar.style.width = '100%';
+              uploadCountBadge.textContent = '完了';
+              uploadSuccessMessage.classList.remove('hidden');
+            } else if (p.phase === 'error') {
+              uploadProgressContainer.classList.remove('hidden');
+              uploadStatusText.textContent = p.message || '❌ エラーが発生しました';
+              uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+            }
+          }
+
           // ヘルスステータス表示更新
           if (data.isRecording && data.health) {
             healthGuardBar?.classList.remove('hidden');
@@ -715,7 +751,12 @@ public static class IndexHtml
     window.manualUploadBox = async function(sessionId) {
       if (!confirm(`セッション ${sessionId} を Box へアップロードしますか？`)) return;
       uploadProgressContainer.classList.remove('hidden');
-      uploadStatusText.textContent = `Boxへアップロード中: ${sessionId}`;
+      uploadSuccessMessage.classList.add('hidden');
+      uploadStatusText.textContent = `Boxへアップロード準備中: ${sessionId}`;
+      uploadCountBadge.textContent = '送信中';
+      uploadProgressBar.style.width = '20%';
+      uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
+
       try {
         const res = await fetch('/api/box/upload', {
           method: 'POST',
@@ -724,13 +765,24 @@ public static class IndexHtml
         });
         const data = await res.json();
         if (data.success) {
-          alert('✅ Box へのアップロードが完了しました！');
+          uploadProgressBar.style.width = '100%';
+          uploadStatusText.textContent = '✅ Box へのアップロードが完了しました！';
+          uploadCountBadge.textContent = '完了';
+          uploadSuccessMessage.classList.remove('hidden');
+          if (data.folderUrl) {
+            boxFolderLink.href = data.folderUrl;
+          }
           await loadPendingSessions();
+          setTimeout(() => {
+            uploadProgressContainer.classList.add('hidden');
+          }, 5000);
         } else {
-          alert(`❌ アップロード失敗: ${data.message}`);
+          uploadStatusText.textContent = `❌ アップロード失敗: ${data.message}`;
+          uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
         }
       } catch (err) {
-        alert(`❌ 通信エラー: ${err.message}`);
+        uploadStatusText.textContent = `❌ 通信エラー: ${err.message}`;
+        uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
       }
     };
 

@@ -51,6 +51,12 @@ public record RecordingHealthStatus(
     string ActiveMicDevice,
     string? WarningMessage);
 
+public record CurrentPipelineProgress(
+    string Phase, // "idle", "recording", "converting", "uploading", "verifying", "completed", "error"
+    string Message,
+    int ProgressPercent,
+    string? CurrentFile = null);
+
 public class RecordingWorkflowService
 {
     private readonly AudioEngine _audioEngine;
@@ -69,6 +75,26 @@ public class RecordingWorkflowService
 
     private CancellationTokenSource? _watchdogCts;
     private bool _silenceWarningNotified;
+    private CurrentPipelineProgress _currentProgress = new("idle", "待機中", 0);
+
+    public CurrentPipelineProgress CurrentProgress
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _currentProgress;
+            }
+        }
+    }
+
+    public void UpdateProgress(string phase, string message, int progressPercent, string? currentFile = null)
+    {
+        lock (_lock)
+        {
+            _currentProgress = new CurrentPipelineProgress(phase, message, progressPercent, currentFile);
+        }
+    }
 
     public bool IsRecording
     {
@@ -274,6 +300,8 @@ public class RecordingWorkflowService
                 // 3. 死活監視 Watchdog 開始
                 StartWatchdogLoop();
 
+                UpdateProgress("recording", "記録中", 0);
+
                 Console.WriteLine($"[Workflow] 🎙️ 会議記録を開始しました: セッション {session.SessionId} (スリープ抑止: ON)");
                 RecordingStarted?.Invoke(session.SessionId);
 
@@ -456,6 +484,7 @@ public class RecordingWorkflowService
 
                 if (File.Exists(wavPath))
                 {
+                    UpdateProgress("converting", "WAV音声をMP3へ高圧縮中...", 20);
                     PipelineProgress?.Invoke("audio", "WAV音声をMP3へ高圧縮中...");
                     mp3Result = AudioConverter.ConvertWavToMp3(wavPath, mp3Path, targetSampleRate: 24000, targetChannels: 1, desiredBitRate: 64000);
                     targetAudioPath = mp3Result.Success ? mp3Path : wavPath;
@@ -488,6 +517,7 @@ public class RecordingWorkflowService
                     _spoolService.UpdateMetadata(metadata);
                 }
 
+                UpdateProgress("uploading", "Boxへアップロード準備中...", 40);
                 PipelineProgress?.Invoke("upload", "Boxへ会議記録の一括アップロードを開始します...");
                 boxResult = await _boxService.UploadSessionAsync(
                     stoppingSessionDir, 
@@ -495,12 +525,18 @@ public class RecordingWorkflowService
                     _selectedThemeId, 
                     onProgress: (cur, total, file) =>
                     {
-                        PipelineProgress?.Invoke("upload", $"Boxへアップロード中: {cur}/{total} ({file})");
+                        int pct = 40 + (int)((double)cur / Math.Max(1, total) * 55);
+                        string msg = file == "meta.json"
+                            ? "⭐ meta.json (完了トリガー) をアップロード中..."
+                            : $"Boxへアップロード中: {cur}/{total} ({file})";
+                        UpdateProgress("uploading", msg, pct, file);
+                        PipelineProgress?.Invoke("upload", msg);
                     });
 
                 if (boxResult.Success && metadata != null)
                 {
                     metadata.Pipeline.Upload = "success";
+                    UpdateProgress("completed", "✅ Boxへの一括アップロード完了！", 100);
                     PipelineCompleted?.Invoke("会議記録のBoxへのアップロードが完了しました！");
                 }
                 else if (metadata != null)
@@ -508,6 +544,7 @@ public class RecordingWorkflowService
                     metadata.Pipeline.Upload = "error";
                     metadata.Pipeline.ErrorMessage = boxResult.Message;
                     _spoolService.UpdateMetadata(metadata);
+                    UpdateProgress("error", $"⚠️ Boxアップロードエラー: {boxResult.Message}", 0);
                     PipelineFailed?.Invoke("upload", boxResult.Message);
                 }
             }
@@ -515,6 +552,7 @@ public class RecordingWorkflowService
             {
                 metadata.Pipeline.Upload = "skipped";
                 _spoolService.UpdateMetadata(metadata);
+                UpdateProgress("completed", "会議記録のローカル保存が完了しました。", 100);
                 PipelineCompleted?.Invoke("会議記録のローカル保存が完了しました。");
             }
 
@@ -533,6 +571,7 @@ public class RecordingWorkflowService
         }
         catch (Exception ex)
         {
+            UpdateProgress("error", $"❌ 停止処理エラー: {ex.Message}", 0);
             PipelineFailed?.Invoke("error", ex.Message);
             return new RecordingStopResult(false, $"停止処理に失敗しました: {ex.Message}");
         }
