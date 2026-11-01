@@ -898,7 +898,8 @@ public static class Program
                 isCapturing = screenEngine.IsCapturing,
                 capturedCount = screenEngine.CapturedCount,
                 targetScreen = screenEngine.TargetScreen,
-                audioLevel = audioEngine.CurrentAudioLevel
+                audioLevel = audioEngine.CurrentAudioLevel,
+                health = workflow.GetHealthStatus()
             });
         });
 
@@ -943,6 +944,21 @@ public static class Program
             {
                 message = "手動スクショを撮影しました。",
                 capture = evt
+            });
+        });
+
+        // API: 録音中のオーディオデバイス強制再接続 (Bluetooth切替・ヘッドセット挿抜時の手動/テストリカバリ)
+        app.MapPost("/api/record/reconnect", (AudioEngine audioEngine, RecordingWorkflowService workflow) =>
+        {
+            if (!workflow.IsRecording)
+            {
+                return Results.BadRequest(new { error = "記録中ではありません。" });
+            }
+
+            audioEngine.RequestDeviceRefresh();
+            return Results.Ok(new
+            {
+                message = "オーディオデバイスの再接続を要求しました。"
             });
         });
 

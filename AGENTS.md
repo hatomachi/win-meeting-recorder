@@ -138,6 +138,20 @@ scp win-test:C:/work/test_screen_out/images/*.jpg ./
       3. ★**`meta.json`**（後段サーバーの検知トリガーとして全ファイル転送完了後に必ず最後にアップロード）
     - **スプール自動クリーンアップ**: アップロード成功時にローカルスプール一時ファイルを完全消去（失敗時は保持・手動再送可能）。
     - **実機検証完了**: 手元Windows検証機にて、録音開始 ➜ 手動スクショ ➜ 停止 ➜ MP3高圧縮（96.8%削減）➜ Boxフォルダ自動作成 ➜ 全ファイル一括アップロード ➜ meta.json最終送信 ➜ スプール自動消去まで完全完走を確認完了！
+  - **Phase 10 (4重の安全防御・自己修復アーキテクチャによる途中停止ゼロ化)**:
+    - **防御① 録音ループの自己修復 ＆ デバイス切断時ホットスワップ自動再接続 (`AudioEngine.cs`)**:
+      - `while` ループ内側に `try-catch` を配置し、一時的なI/O例外やサンプルエラーでも録音ループが絶対に死なない設計に強化。
+      - Bluetoothイヤホンの充電切れ、USBヘッドセットの抜線、Teams起動時のデバイス切り替え（`AUDCLNT_E_DEVICE_INVALIDATED`）を検知すると、即座にOSの現在の既定デバイスへ自動フォールバックしてミキサー入力を無停止でホットスワップ再接続（`POST /api/record/reconnect` での強制再接続にも対応）。
+      - 5秒ごとの定期WAV `Flush()` により、万が一のOSクラッシュや電源断でも直前までの録音データを保護。
+    - **防御② 画面ロック自動復帰 ＆ 外部モニター切断時プライマリ自動フォールバック ＆ ハイブリッド差分検知 (`ScreenCaptureEngine.cs`, `ScreenDiffDetector.cs`)**:
+      - 画面ロック（`Win+L`）やUAC暗転時の `CopyFromScreen` 例外時に `Bitmap` を確実に `Dispose()` してGDIリークを完全防止しつつ安全待機。ロック解除の瞬間に `reason = "resume"` として即座に復帰キーフレームを自動撮影。
+      - プロジェクターや外部モニター抜線・真っ黒画面連続検知時に、自動的にプライマリ画面（メインディスプレイ）へフォールバックしてキャプチャを継続。
+      - 全体平均輝度差だけでなく「明確に変化したピクセル（輝度差>=28）の面積比率（2.5%以上）」を組み合わせたハイブリッド差分判定により、背景色が同じで数行だけ文字が増えたスライド変化も確実にとらえるよう改善。
+    - **防御③ OSスリープ・画面消灯の完全抑止 (`PowerManagementService.cs`)**:
+      - Win32 API `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)` により、録音中はPCの自動スリープやディスプレイ電源OFFをOSレベルで完全ブロック（停止時に自動解除）。
+    - **防御④ 死活監視 Watchdog ＆ タスクトレイ・Web UI 異常アラート (`RecordingWorkflowService.cs`, `TrayIconService.cs`)**:
+      - 3秒周期のWatchdogで音声ストール自己修復や3分間連続無音（マイクミュート忘れ等）を監視。
+      - 注意状態（無音継続・画面ロック中）ではタスクトレイアイコンの外枠がアンバー（黄色）点滅に変化し、バルーン通知とWeb UIバナーで即座に気づける安心UXを実現。
 - **次期実装タスク（Phase 8B: webapp-obsidian 議事録ビューア連携 ＆ GitLabバックフィル ＆ 外部音声インポート）**:
   - ~~**Phase 8B-0**: `MINUTES_GUIDE.md` 準拠フォーマット（経過時間ベース `HH_MM_SS_screen.jpg` スクショ命名、`transcript.yaml` 同時生成、`README.md` / `MINUTES.md` アトミックコミット）の完全対応。~~ ✅ **完了** (`75ca6d2`)
   - **Phase 8B-1**: GitLab上の未処理フォルダ（音声はあるがtranscriptやminutesがない過去会議）の自動検出 ＆ バックフィル（文字起こし＋AI議事録作成・再コミット）機能。

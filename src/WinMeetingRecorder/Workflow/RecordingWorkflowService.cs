@@ -40,6 +40,17 @@ public record RecordStartOptions(
     bool? EnableScreenCapture = null,
     string? ThemeId = null);
 
+public record RecordingHealthStatus(
+    string OverallStatus,
+    bool SleepPrevented,
+    int AudioReconnectCount,
+    int ScreenFallbackCount,
+    int SilenceSeconds,
+    string ScreenState,
+    string ActivePlaybackDevice,
+    string ActiveMicDevice,
+    string? WarningMessage);
+
 public class RecordingWorkflowService
 {
     private readonly AudioEngine _audioEngine;
@@ -55,6 +66,9 @@ public class RecordingWorkflowService
     private ActiveSessionState? _activeSession;
     private DateTime? _recordStartTime;
     private string? _selectedThemeId;
+
+    private CancellationTokenSource? _watchdogCts;
+    private bool _silenceWarningNotified;
 
     public bool IsRecording
     {
@@ -93,12 +107,27 @@ public class RecordingWorkflowService
         }
     }
 
+    /// <summary>
+    /// 録音中に注意・警告状態（長時間無音、画面ロック中など）にあるかどうか
+    /// </summary>
+    public bool HasActiveWarning
+    {
+        get
+        {
+            if (!IsRecording) return false;
+            var health = GetHealthStatus();
+            return health.OverallStatus == "warning";
+        }
+    }
+
     // イベント通知
     public event Action<string>? RecordingStarted;
     public event Action<string>? RecordingStopped;
     public event Action<string, string>? PipelineProgress;
     public event Action<string>? PipelineCompleted;
     public event Action<string, string>? PipelineFailed;
+    public event Action<string>? HealthNotice;
+    public event Action<string>? HealthWarning;
 
     public RecordingWorkflowService(
         AudioEngine audioEngine,
@@ -130,6 +159,72 @@ public class RecordingWorkflowService
                 }
             }
         };
+
+        // 自己修復・自動フォールバック通知の連携
+        _audioEngine.OnDeviceReconnected += msg =>
+        {
+            HealthNotice?.Invoke(msg);
+        };
+
+        _screenEngine.OnScreenStatusMessage += msg =>
+        {
+            HealthNotice?.Invoke(msg);
+        };
+    }
+
+    /// <summary>
+    /// 現在の健全性・死活監視ステータスを取得する
+    /// </summary>
+    public RecordingHealthStatus GetHealthStatus()
+    {
+        if (!IsRecording)
+        {
+            return new RecordingHealthStatus(
+                "idle",
+                PowerManagementService.IsSleepPrevented,
+                _audioEngine.ReconnectCount,
+                _screenEngine.FallbackCount,
+                0,
+                "idle",
+                _audioEngine.ActivePlaybackDeviceName,
+                _audioEngine.ActiveMicDeviceName,
+                null);
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        int silenceSec = _audioEngine.LastNonSilentUtc > DateTime.MinValue
+            ? Math.Max(0, (int)(nowUtc - _audioEngine.LastNonSilentUtc).TotalSeconds)
+            : 0;
+
+        string? warningMsg = null;
+        string overall = "healthy";
+
+        if (_screenEngine.HealthStatus == "screen_locked")
+        {
+            overall = "warning";
+            warningMsg = _screenEngine.LastWarningMessage ?? "画面ロック中 (解除後に自動再開します)";
+        }
+        else if (silenceSec >= 180)
+        {
+            overall = "warning";
+            warningMsg = $"約{silenceSec / 60}分間、音声入力が検出されていません (ミュート確認)";
+        }
+        else if (!string.IsNullOrEmpty(_audioEngine.LastWarningMessage))
+        {
+            overall = "warning";
+            warningMsg = _audioEngine.LastWarningMessage;
+        }
+
+        return new RecordingHealthStatus(
+            overall,
+            PowerManagementService.IsSleepPrevented,
+            _audioEngine.ReconnectCount,
+            _screenEngine.FallbackCount,
+            silenceSec,
+            _screenEngine.HealthStatus,
+            _audioEngine.ActivePlaybackDeviceName,
+            _audioEngine.ActiveMicDeviceName,
+            warningMsg);
     }
 
     /// <summary>
@@ -153,11 +248,15 @@ public class RecordingWorkflowService
             var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name);
             _activeSession = new ActiveSessionState(session.SessionId, session.SpoolDirectory);
             _recordStartTime = DateTime.Now;
+            _silenceWarningNotified = false;
 
             var outputPath = Path.Combine(session.SpoolDirectory, "meeting_audio.wav");
 
             try
             {
+                // 0. OSスリープ・画面消灯の完全抑止
+                PowerManagementService.PreventSleepAndDisplayOff();
+
                 // 1. 音声録音開始
                 _audioEngine.StartRecording(outputPath, options?.PlaybackDeviceId, options?.CaptureDeviceId);
 
@@ -172,7 +271,10 @@ public class RecordingWorkflowService
                     _screenEngine.StartCapture(session.SpoolDirectory, opt);
                 }
 
-                Console.WriteLine($"[Workflow] 🎙️ 会議記録を開始しました: セッション {session.SessionId}");
+                // 3. 死活監視 Watchdog 開始
+                StartWatchdogLoop();
+
+                Console.WriteLine($"[Workflow] 🎙️ 会議記録を開始しました: セッション {session.SessionId} (スリープ抑止: ON)");
                 RecordingStarted?.Invoke(session.SessionId);
 
                 return Task.FromResult(new RecordingStartResult(
@@ -186,6 +288,9 @@ public class RecordingWorkflowService
             catch (Exception ex)
             {
                 // ロールバック
+                StopWatchdogLoop();
+                PowerManagementService.RestorePowerSettings();
+
                 if (_audioEngine.IsRecording)
                 {
                     _ = _audioEngine.StopRecordingAsync();
@@ -198,6 +303,89 @@ public class RecordingWorkflowService
                 _recordStartTime = null;
                 return Task.FromResult(new RecordingStartResult(false, $"記録開始に失敗しました: {ex.Message}"));
             }
+        }
+    }
+
+    /// <summary>
+    /// 録音中の死活監視 (Watchdog) ループを開始する
+    /// </summary>
+    private void StartWatchdogLoop()
+    {
+        StopWatchdogLoop();
+        _watchdogCts = new CancellationTokenSource();
+        var token = _watchdogCts.Token;
+
+        Task.Run(async () =>
+        {
+            int tick = 0;
+            while (!token.IsCancellationRequested && IsRecording)
+            {
+                try
+                {
+                    await Task.Delay(3000, token);
+                    if (!IsRecording) break;
+                    tick++;
+
+                    // 1. 30秒ごとにOSのスリープ・画面OFF抑止タイマーを再パルス
+                    if (tick % 10 == 0)
+                    {
+                        PowerManagementService.PulseKeepAlive();
+                    }
+
+                    var nowUtc = DateTime.UtcNow;
+
+                    // 2. AudioEngine の書き込みストール監視 (6秒以上書き込みが止まっていたらデバイス再初期化を要求)
+                    if (_audioEngine.IsRecording && _audioEngine.LastAudioWriteUtc > DateTime.MinValue)
+                    {
+                        double stalledSec = (nowUtc - _audioEngine.LastAudioWriteUtc).TotalSeconds;
+                        if (stalledSec > 6.0)
+                        {
+                            Console.WriteLine($"[Watchdog] ⚠️ 音声書き込みの遅延({stalledSec:F1}秒)を検知しました。デバイス再接続を要求します。");
+                            _audioEngine.RequestDeviceRefresh();
+                        }
+                    }
+
+                    // 3. 長時間完全無音 (3分 = 180秒以上) の検知と通知
+                    if (_audioEngine.IsRecording && _audioEngine.LastNonSilentUtc > DateTime.MinValue)
+                    {
+                        double silenceSec = (nowUtc - _audioEngine.LastNonSilentUtc).TotalSeconds;
+                        if (silenceSec >= 180.0 && !_silenceWarningNotified)
+                        {
+                            _silenceWarningNotified = true;
+                            string warn = "3分間、音声が検出されていません。マイクのミュートやデバイス設定を確認してください。";
+                            Console.WriteLine($"[Watchdog] ⚠️ {warn}");
+                            HealthWarning?.Invoke(warn);
+                        }
+                        else if (silenceSec < 5.0 && _silenceWarningNotified)
+                        {
+                            // 再び音声が入ったら警告フラグをクリア
+                            _silenceWarningNotified = false;
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Watchdog] 監視ループ例外: {ex.Message}");
+                }
+            }
+        }, token);
+    }
+
+    private void StopWatchdogLoop()
+    {
+        try
+        {
+            _watchdogCts?.Cancel();
+            _watchdogCts?.Dispose();
+        }
+        catch { /* ignore */ }
+        finally
+        {
+            _watchdogCts = null;
         }
     }
 
@@ -217,7 +405,7 @@ public class RecordingWorkflowService
     }
 
     /// <summary>
-    /// 記録を停止し、自動パイプライン (MP3化 -> Whisper文字起こし -> AI議事録 -> GitLabプッシュ) を実行する
+    /// 記録を停止し、自動パイプライン (MP3化 -> Boxアップロード) を実行する
     /// </summary>
     public async Task<RecordingStopResult> StopRecordingAsync()
     {
@@ -236,6 +424,9 @@ public class RecordingWorkflowService
             _activeSession = null;
             _recordStartTime = null;
         }
+
+        StopWatchdogLoop();
+        PowerManagementService.RestorePowerSettings();
 
         try
         {

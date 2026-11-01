@@ -217,6 +217,16 @@ public class TrayIconService : IDisposable
             PostToUiThread(() => ShowBalloon("⚠️ 自動処理エラー", $"ステップ '{step}': {err}", ToolTipIcon.Warning));
         };
 
+        _workflow.HealthNotice += msg =>
+        {
+            PostToUiThread(() => ShowBalloon("🔄 自動復旧ガード作動", msg, ToolTipIcon.Info));
+        };
+
+        _workflow.HealthWarning += msg =>
+        {
+            PostToUiThread(() => ShowBalloon("⚠️ 会議記録の注意", msg, ToolTipIcon.Warning));
+        };
+
         // 自己修復バックグラウンド監視 (イベント取りこぼし対策・500ms周期)
         StartMonitorLoop();
 
@@ -323,7 +333,15 @@ public class TrayIconService : IDisposable
             var elapsed = _workflow.ElapsedTime;
             string timeStr = $"{(int)elapsed.TotalMinutes:D2}:{elapsed.Seconds:D2}";
             int levelPct = (int)(_audioEngine.CurrentAudioLevel * 100);
-            _headerItem.Text = $"🔴 録音中 ({timeStr}) [音声: {levelPct}%]";
+            var health = _workflow.GetHealthStatus();
+            if (health.OverallStatus == "warning")
+            {
+                _headerItem.Text = $"⚠️ 録音中・注意 ({timeStr}) [無音/ロック確認]";
+            }
+            else
+            {
+                _headerItem.Text = $"🔴 録音中 ({timeStr}) [音声: {levelPct}% | 🛡️保護ON]";
+            }
         }
         else
         {
@@ -376,7 +394,7 @@ public class TrayIconService : IDisposable
     }
 
     /// <summary>
-    /// 録音中リアルタイム波形アイコンの更新 (赤背景枠 + 赤丸REC + 跳ねる鮮やか緑バー)
+    /// 録音中リアルタイム波形アイコンの更新 (赤背景枠 + 赤丸REC + 跳ねる鮮やか緑バー / 警告時はアンバー点滅)
     /// </summary>
     private void UpdateRecordingWaveformIcon()
     {
@@ -385,6 +403,7 @@ public class TrayIconService : IDisposable
         _tickCount++;
         float audioLevel = _audioEngine.CurrentAudioLevel; // 0.0f ~ 1.0f
         bool hasVoice = audioLevel > 0.02f;
+        bool hasWarning = _workflow.HasActiveWarning;
 
         using var bmp = new Bitmap(32, 32);
         using (var g = Graphics.FromImage(bmp))
@@ -399,23 +418,31 @@ public class TrayIconService : IDisposable
                 FillRoundedRectangle(g, bgBrush, new Rectangle(0, 0, 31, 31), 6);
             }
 
-            // 録音中外周赤枠 (録音中であることが一目でわかる!)
-            using (var recBorderPen = new Pen(Color.FromArgb(239, 68, 68), 1.8f))
+            // 外周枠: 通常は赤 (#EF4444)、長時間無音や画面ロック注意時はアンバー黄色 (#F59E0B) で点滅通知
+            Color borderColor = (hasWarning && (_tickCount / 4) % 2 == 0)
+                ? Color.FromArgb(245, 158, 11)
+                : Color.FromArgb(239, 68, 68);
+
+            using (var recBorderPen = new Pen(borderColor, 1.8f))
             {
                 DrawRoundedRectangle(g, recBorderPen, new Rectangle(1, 1, 29, 29), 5);
             }
 
-            // 左上: 鮮烈に光る赤丸 (● REC)
-            using (var recDotBrush = new SolidBrush(Color.FromArgb(239, 68, 68)))
+            // 左上: 鮮烈に光る丸 (通常: 赤 ● REC / 注意時: アンバー黄色)
+            Color dotColor = hasWarning
+                ? Color.FromArgb(245, 158, 11)
+                : Color.FromArgb(239, 68, 68);
+
+            using (var recDotBrush = new SolidBrush(dotColor))
             {
                 g.FillEllipse(recDotBrush, 4, 5, 7, 7);
             }
 
             // 4本のイコライザー波形バー
-            // 音声検知中は鮮烈なネオングリーン (#22C55E)、無音時は薄いスレートグリーン
+            // 音声検知中は鮮烈なネオングリーン (#22C55E)、注意時はアンバー、無音時は薄いスレート
             Color barColor = hasVoice 
                 ? Color.FromArgb(34, 197, 94)   // 鮮烈エメラルドグリーン (音声拾えてる!)
-                : Color.FromArgb(51, 65, 85);    // 無音時ベース
+                : (hasWarning ? Color.FromArgb(180, 83, 9) : Color.FromArgb(51, 65, 85));
 
             int[] barX = [13, 17, 21, 25];
             float[] factors = [0.9f, 1.5f, 1.3f, 0.8f];
@@ -447,7 +474,9 @@ public class TrayIconService : IDisposable
         var elapsed = _workflow.ElapsedTime;
         string timeStr = $"{(int)elapsed.TotalMinutes:D2}:{elapsed.Seconds:D2}";
         int levelPct = (int)(audioLevel * 100);
-        string tooltip = $"WinMeetingRecorder [録音中: {timeStr} | 音声: {levelPct}%]";
+        string tooltip = hasWarning
+            ? $"WinMeetingRecorder [⚠️注意(無音/ロック) {timeStr}]"
+            : $"WinMeetingRecorder [録音中: {timeStr} | 音声: {levelPct}%]";
         if (tooltip.Length > 63) tooltip = tooltip.Substring(0, 63);
 
         ApplyBitmapAsIcon(bmp, tooltip);

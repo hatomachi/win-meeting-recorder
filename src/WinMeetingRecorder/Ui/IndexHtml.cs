@@ -115,6 +115,19 @@ public static class IndexHtml
           <div id="audioLevelBar" class="bg-emerald-500 h-2 rounded-full transition-all duration-100" style="width: 0%"></div>
         </div>
       </div>
+
+      <!-- 4重保護ガード・ヘルスモニター表示 -->
+      <div id="healthGuardBar" class="hidden pt-1 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+        <div class="flex items-center space-x-2 text-emerald-400" id="healthStatusLabel">
+          <span>🛡️</span>
+          <span>自動復旧ガード稼働中 (スリープ抑止: ON / デバイス切断自動再接続)</span>
+        </div>
+        <div id="healthDeviceSummary" class="text-[10px] text-slate-400 font-mono truncate max-w-xs"></div>
+      </div>
+      <div id="healthWarningBanner" class="hidden bg-amber-950/70 border border-amber-500/50 rounded-lg px-3 py-2 text-xs text-amber-300 flex items-center space-x-2">
+        <span>⚠️</span>
+        <span id="healthWarningText">注意メッセージ</span>
+      </div>
     </div>
 
     <!-- Box アップロード進捗表示エリア (停止後表示) -->
@@ -612,11 +625,18 @@ public static class IndexHtml
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = null;
         timerText.textContent = '00:00:00';
+        document.getElementById('healthGuardBar')?.classList.add('hidden');
+        document.getElementById('healthWarningBanner')?.classList.add('hidden');
       }
     }
 
-    // ポーリング監視 (録音状態・音量レベル・トレイ同期)
+    // ポーリング監視 (録音状態・音量レベル・トレイ同期・4重保護ガード状態)
     function startPollingStatus() {
+      const healthGuardBar = document.getElementById('healthGuardBar');
+      const healthDeviceSummary = document.getElementById('healthDeviceSummary');
+      const healthWarningBanner = document.getElementById('healthWarningBanner');
+      const healthWarningText = document.getElementById('healthWarningText');
+
       setInterval(async () => {
         try {
           const res = await fetch('/api/status');
@@ -639,6 +659,23 @@ public static class IndexHtml
 
           if (data.isRecording && data.capturedCount !== undefined) {
             shotCountText.textContent = `撮影: ${data.capturedCount} 枚`;
+          }
+
+          // ヘルスステータス表示更新
+          if (data.isRecording && data.health) {
+            healthGuardBar?.classList.remove('hidden');
+            const recon = data.health.audioReconnectCount > 0 ? ` (再接続:${data.health.audioReconnectCount}回)` : '';
+            healthDeviceSummary.textContent = `🔊 ${data.health.activePlaybackDevice || '既定'} / 🎤 ${data.health.activeMicDevice || '既定'}${recon}`;
+
+            if (data.health.overallStatus === 'warning' && data.health.warningMessage) {
+              healthWarningBanner?.classList.remove('hidden');
+              healthWarningText.textContent = data.health.warningMessage;
+            } else {
+              healthWarningBanner?.classList.add('hidden');
+            }
+          } else {
+            healthGuardBar?.classList.add('hidden');
+            healthWarningBanner?.classList.add('hidden');
           }
         } catch { /* ignore */ }
       }, 500);

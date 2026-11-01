@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace WinMeetingRecorder.Screen;
@@ -59,6 +61,7 @@ public record ScreenCaptureEvent(
 
 /// <summary>
 /// GDI+ CopyFromScreen による画面キャプチャ＆変化検知エンジン
+/// (画面ロック自動復帰・外部モニター切断時のプライマリ自動フォールバック対応)
 /// </summary>
 [SupportedOSPlatform("windows")]
 public class ScreenCaptureEngine : IDisposable
@@ -68,6 +71,7 @@ public class ScreenCaptureEngine : IDisposable
     private Task? _captureTask;
     private bool _disposed;
 
+    private int _requestedMonitorIndex;
     private ScreenInfo? _targetScreen;
     private byte[]? _lastSavedThumb;
     private DateTime _startTime;
@@ -80,6 +84,12 @@ public class ScreenCaptureEngine : IDisposable
     public string? CurrentOutputDir => _imagesDirectory;
     public ScreenInfo? TargetScreen => _targetScreen;
 
+    // 健全性・監視用テレメトリ
+    public DateTime LastCheckUtc { get; private set; } = DateTime.MinValue;
+    public string HealthStatus { get; private set; } = "idle";
+    public string? LastWarningMessage { get; private set; }
+    public int FallbackCount { get; private set; }
+
     /// <summary>
     /// 画面が撮影・保存された際に発火するイベント
     /// </summary>
@@ -89,6 +99,11 @@ public class ScreenCaptureEngine : IDisposable
     /// 定期チェック時に差分率が計算された際に発火する診断イベント (オプション)
     /// </summary>
     public event Action<double, int>? OnDiffCalculated;
+
+    /// <summary>
+    /// モニター自動フォールバックやロック復帰などの状態変化時に発火するイベント
+    /// </summary>
+    public event Action<string>? OnScreenStatusMessage;
 
     /// <summary>
     /// 画面キャプチャおよび自動変化検知監視を開始します
@@ -105,6 +120,7 @@ public class ScreenCaptureEngine : IDisposable
             }
 
             options ??= new ScreenCaptureOptions();
+            _requestedMonitorIndex = options.MonitorIndex;
             _targetScreen = ScreenService.ResolveScreen(options.MonitorIndex);
 
             // outputDir/images ディレクトリを準備
@@ -112,10 +128,15 @@ public class ScreenCaptureEngine : IDisposable
             Directory.CreateDirectory(_imagesDirectory);
 
             _cts = new CancellationTokenSource();
-            _startTime = DateTime.UtcNow;
+            var nowUtc = DateTime.UtcNow;
+            _startTime = nowUtc;
             _lastCaptureTime = DateTime.MinValue;
+            LastCheckUtc = nowUtc;
             _capturedCount = 0;
             _lastSavedThumb = null;
+            HealthStatus = "healthy";
+            LastWarningMessage = null;
+            FallbackCount = 0;
             IsCapturing = true;
 
             var ct = _cts.Token;
@@ -127,7 +148,7 @@ public class ScreenCaptureEngine : IDisposable
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ScreenCapture] 初回キャプチャ警告: {ex.Message}");
+                Console.WriteLine($"[ScreenCapture] 初回キャプチャ警告 (監視ループで自動リトライします): {ex.Message}");
             }
 
             // 2. バックグラウンド変化検知ループ開始
@@ -147,6 +168,7 @@ public class ScreenCaptureEngine : IDisposable
         {
             if (!IsCapturing) return;
             IsCapturing = false;
+            HealthStatus = "idle";
             cts = _cts;
             task = _captureTask;
         }
@@ -188,22 +210,81 @@ public class ScreenCaptureEngine : IDisposable
                 return null;
             }
 
-            return CaptureAndSaveInternal(_targetScreen.Bounds, "manual", 1.0, jpegQuality);
+            try
+            {
+                RefreshTargetScreenBoundsIfNeeded();
+                return CaptureAndSaveInternal(_targetScreen.Bounds, "manual", 1.0, jpegQuality);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ScreenCapture] 手動撮影エラー (プライマリ画面で再試行): {ex.Message}");
+                try
+                {
+                    _targetScreen = ScreenService.GetPrimaryScreen();
+                    return CaptureAndSaveInternal(_targetScreen.Bounds, "manual", 1.0, jpegQuality);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
         }
     }
 
     /// <summary>
-    /// 変化検知＆デバウンス監視ループ
+    /// モニター構成や解像度が動的に変わった場合に追従・フォールバックする
+    /// </summary>
+    private void RefreshTargetScreenBoundsIfNeeded()
+    {
+        try
+        {
+            var resolved = ScreenService.ResolveScreen(_requestedMonitorIndex);
+            if (_targetScreen == null || _targetScreen.Bounds != resolved.Bounds || _targetScreen.Index != resolved.Index)
+            {
+                bool isFallback = _requestedMonitorIndex > 0 && resolved.Index != _requestedMonitorIndex;
+                _targetScreen = resolved;
+
+                if (isFallback)
+                {
+                    FallbackCount++;
+                    string msg = $"指定モニター({_requestedMonitorIndex})が切断されたため、メイン画面({resolved.Name})へ自動切り替えしました。";
+                    LastWarningMessage = msg;
+                    Console.WriteLine($"[ScreenCapture] 🔄 {msg}");
+                    OnScreenStatusMessage?.Invoke(msg);
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    /// <summary>
+    /// 変化検知＆デバウンス＆自己修復監視ループ
     /// </summary>
     private async Task RunMonitoringLoopAsync(ScreenCaptureOptions options, CancellationToken ct)
     {
-        var bounds = _targetScreen!.Bounds;
+        bool wasScreenUnavailable = false;
+        int consecutiveBlackFrames = 0;
+        int consecutiveErrors = 0;
+        int loopCounter = 0;
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(options.CheckIntervalMs, ct);
+                LastCheckUtc = DateTime.UtcNow;
+                loopCounter++;
+
+                // 5秒ごとにディスプレイ構成・解像度の変化を動的チェック (プロジェクター抜線やドック着脱に対応)
+                if (loopCounter % 5 == 0)
+                {
+                    RefreshTargetScreenBoundsIfNeeded();
+                }
+
+                var bounds = _targetScreen?.Bounds ?? ScreenService.GetPrimaryScreen().Bounds;
 
                 // 1. 現在の画面をキャプチャしサムネイル生成
                 byte[] currentThumb;
@@ -211,6 +292,53 @@ public class ScreenCaptureEngine : IDisposable
                 {
                     currentThumb = ScreenDiffDetector.CreateGrayscaleThumbnail(currentBmp);
                 }
+
+                // もし外部モニター指定中に完全な真っ黒画面が3回連続した場合は、モニター領域消失とみなしてメイン画面へフォールバック
+                if (_requestedMonitorIndex > 0 && _targetScreen?.Index != 0 && ScreenDiffDetector.IsCompletelyBlack(currentThumb))
+                {
+                    consecutiveBlackFrames++;
+                    if (consecutiveBlackFrames >= 3)
+                    {
+                        var primary = ScreenService.GetPrimaryScreen();
+                        if (_targetScreen?.Bounds != primary.Bounds)
+                        {
+                            _targetScreen = primary;
+                            FallbackCount++;
+                            string msg = $"対象モニターが真っ黒(切断/消灯)のため、メイン画面({primary.Name})へ自動フォールバックしました。";
+                            LastWarningMessage = msg;
+                            Console.WriteLine($"[ScreenCapture] 🔄 {msg}");
+                            OnScreenStatusMessage?.Invoke(msg);
+                            consecutiveBlackFrames = 0;
+                            continue;
+                        }
+                    }
+                }
+                else
+                {
+                    consecutiveBlackFrames = 0;
+                }
+
+                consecutiveErrors = 0;
+
+                // ★ 画面ロック (Win+L) や UAC 暗転から復帰した直後の場合は、即座に復帰キーフレームを撮影！
+                if (wasScreenUnavailable)
+                {
+                    wasScreenUnavailable = false;
+                    HealthStatus = "healthy";
+                    LastWarningMessage = null;
+                    Console.WriteLine("[ScreenCapture] 🟢 画面ロック/暗転からの復帰を検知しました。キーフレームを撮影します。");
+
+                    lock (_lock)
+                    {
+                        if (IsCapturing)
+                        {
+                            CaptureAndSaveInternal(bounds, "resume", 1.0, options.JpegQuality);
+                        }
+                    }
+                    continue;
+                }
+
+                HealthStatus = "healthy";
 
                 // 2. 前回収得サムネイルとの差分計算
                 double diff = ScreenDiffDetector.ComputeDifference(_lastSavedThumb, currentThumb);
@@ -237,7 +365,7 @@ public class ScreenCaptureEngine : IDisposable
                 }
                 else if (options.MaxIntervalSec > 0 && timeSinceLastCapture >= options.MaxIntervalSec)
                 {
-                    // 定期キーフレーム
+                    // 定期キーフレーム (長時間の議論でも必ず1分に1枚は証跡を残す)
                     shouldCapture = true;
                     reason = "timer";
                 }
@@ -249,7 +377,8 @@ public class ScreenCaptureEngine : IDisposable
                     {
                         if (IsCapturing)
                         {
-                            CaptureAndSaveInternal(bounds, reason, diff, options.JpegQuality);
+                            var latestBounds = _targetScreen?.Bounds ?? bounds;
+                            CaptureAndSaveInternal(latestBounds, reason, diff, options.JpegQuality);
                         }
                     }
                 }
@@ -258,9 +387,48 @@ public class ScreenCaptureEngine : IDisposable
             {
                 break;
             }
+            catch (Exception ex) when (ex is Win32Exception || ex is ExternalException || ex is ArgumentException)
+            {
+                // 画面ロック (Win+L)、UAC昇格プロンプト、スリープ遷移中などの GDI CopyFromScreen 例外
+                consecutiveErrors++;
+                wasScreenUnavailable = true;
+                HealthStatus = "screen_locked";
+                LastWarningMessage = "画面ロックまたはセキュア画面のため一時待機中 (解除後に自動再開します)";
+
+                if (consecutiveErrors == 1)
+                {
+                    Console.WriteLine($"[ScreenCapture] ⏸️ 画面アクセス一時不可 (画面ロック/UAC等): {ex.Message} -> 解除まで安全待機します");
+                }
+                else if (consecutiveErrors == 3 && _targetScreen?.Index != 0)
+                {
+                    // モニター切断による無効座標エラーの可能性もあるため、プライマリ画面を再解決しておく
+                    _targetScreen = ScreenService.GetPrimaryScreen();
+                }
+
+                try
+                {
+                    await Task.Delay(1000, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ScreenCapture] 監視中エラー: {ex.Message}");
+                consecutiveErrors++;
+                HealthStatus = "warning";
+                LastWarningMessage = $"画面監視一時エラー (自動リトライ中): {ex.Message}";
+                Console.WriteLine($"[ScreenCapture] 監視中エラー ({consecutiveErrors}回目): {ex.Message}");
+
+                try
+                {
+                    await Task.Delay(1000, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
     }
@@ -318,10 +486,20 @@ public class ScreenCaptureEngine : IDisposable
     /// </summary>
     public static Bitmap CaptureScreenBitmap(Rectangle bounds)
     {
-        var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
-        using var g = Graphics.FromImage(bmp);
-        g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
-        return bmp;
+        int w = Math.Max(1, bounds.Width);
+        int h = Math.Max(1, bounds.Height);
+        var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        try
+        {
+            using var g = Graphics.FromImage(bmp);
+            g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
+            return bmp;
+        }
+        catch
+        {
+            bmp.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
