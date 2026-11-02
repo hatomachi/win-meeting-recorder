@@ -79,6 +79,12 @@ public class BoxConfig
     public bool AutoUploadOnStop { get; set; } = true;
 
     /// <summary>
+    /// Box接続時、OS/環境変数のプロキシ設定をバイパスして直接接続するか (デフォルト: false)
+    /// ※Boxは外部クラウドのため、通常は標準プロキシ経由(false)で問題ありません
+    /// </summary>
+    public bool BypassProxy { get; set; } = false;
+
+    /// <summary>
     /// クライアント認証情報が入力されているか
     /// </summary>
     public bool HasCredentials =>

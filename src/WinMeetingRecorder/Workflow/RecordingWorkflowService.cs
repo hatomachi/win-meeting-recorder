@@ -317,9 +317,18 @@ public class RecordingWorkflowService
                 bool enableScreen = options?.EnableScreenCapture ?? true;
                 if (enableScreen)
                 {
+                    var screenCfg = _configService.LoadConfig().Screen ?? new ScreenConfig();
                     var opt = new ScreenCaptureOptions
                     {
-                        MonitorIndex = monitorIdx
+                        MonitorIndex = monitorIdx,
+                        CheckIntervalMs = screenCfg.CheckIntervalMs,
+                        MaxIntervalSec = screenCfg.MaxIntervalSec,
+                        DiffAlgorithm = screenCfg.DiffAlgorithm,
+                        PhashThreshold = screenCfg.PhashThreshold,
+                        DiffThreshold = screenCfg.DiffThreshold,
+                        MinIntervalSec = screenCfg.MinIntervalSec,
+                        DebounceStabilityMs = screenCfg.DebounceStabilityMs,
+                        JpegQuality = screenCfg.JpegQuality
                     };
                     _screenEngine.StartCapture(session.SpoolDirectory, opt);
                 }

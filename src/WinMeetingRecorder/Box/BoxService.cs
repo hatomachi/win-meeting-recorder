@@ -27,7 +27,56 @@ public record BoxAuthStatus(
 /// </summary>
 public class BoxService
 {
-    private static readonly HttpClient HttpClient = new();
+    private HttpClient? _httpClient;
+    private bool? _lastBypassProxy;
+
+    private static HttpClient CreateHttpClient(bool bypassProxy)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+            KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(15),
+            EnableMultipleHttp2Connections = true
+        };
+
+        if (bypassProxy)
+        {
+            handler.UseProxy = false;
+            handler.Proxy = null;
+        }
+        else
+        {
+            // Windows OS の標準プロキシ (PAC / WPAD / WinINet) を使用
+            handler.UseProxy = true;
+            handler.Proxy = HttpClient.DefaultProxy;
+            // 会社プロキシの統合Windows認証 (Active Directory / NTLM / Kerberos) にOS資格情報を自動提供
+            handler.DefaultProxyCredentials = CredentialCache.DefaultCredentials;
+        }
+
+        return new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromMinutes(10) // 1時間超の音声MP3や多数スクショの一括アップロードに対応
+        };
+    }
+
+    private HttpClient Http
+    {
+        get
+        {
+            lock (_lock)
+            {
+                var bypassProxy = _configService.LoadConfig().Box.BypassProxy;
+                if (_httpClient == null || _lastBypassProxy != bypassProxy)
+                {
+                    _httpClient?.Dispose();
+                    _httpClient = CreateHttpClient(bypassProxy);
+                    _lastBypassProxy = bypassProxy;
+                }
+                return _httpClient;
+            }
+        }
+    }
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -217,7 +266,7 @@ public class BoxService
             Content = new FormUrlEncodedContent(parameters)
         };
 
-        var response = await HttpClient.SendAsync(request);
+        var response = await Http.SendAsync(request);
         var json = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
@@ -276,7 +325,7 @@ public class BoxService
                 Content = new FormUrlEncodedContent(parameters)
             };
 
-            var response = await HttpClient.SendAsync(request);
+            var response = await Http.SendAsync(request);
             var json = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
@@ -316,7 +365,7 @@ public class BoxService
         using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.box.com/2.0/users/me");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var res = await HttpClient.SendAsync(req);
+        var res = await Http.SendAsync(req);
         var json = await res.Content.ReadAsStringAsync();
 
         if (!res.IsSuccessStatusCode)
@@ -359,7 +408,7 @@ public class BoxService
             using var reqItems = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{sharedFolderId}/items?fields=id,name,type");
             reqItems.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            var resItems = await HttpClient.SendAsync(reqItems);
+            var resItems = await Http.SendAsync(reqItems);
             if (resItems.IsSuccessStatusCode)
             {
                 var jsonItems = await resItems.Content.ReadAsStringAsync();
@@ -383,7 +432,7 @@ public class BoxService
                     using var reqContent = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/files/{themesFileId}/content");
                     reqContent.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-                    var resContent = await HttpClient.SendAsync(reqContent);
+                    var resContent = await Http.SendAsync(reqContent);
                     if (resContent.IsSuccessStatusCode)
                     {
                         var contentJson = await resContent.Content.ReadAsStringAsync();
@@ -467,7 +516,7 @@ public class BoxService
         };
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var res = await HttpClient.SendAsync(req);
+        var res = await Http.SendAsync(req);
         var jsonRes = await res.Content.ReadAsStringAsync();
 
         if (res.StatusCode == HttpStatusCode.Created)
@@ -542,7 +591,7 @@ public class BoxService
         };
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var res = await HttpClient.SendAsync(req);
+        var res = await Http.SendAsync(req);
         var jsonRes = await res.Content.ReadAsStringAsync();
 
         if (res.IsSuccessStatusCode)
@@ -581,7 +630,7 @@ public class BoxService
         };
         createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var createRes = await HttpClient.SendAsync(createReq);
+        var createRes = await Http.SendAsync(createReq);
         var createJson = await createRes.Content.ReadAsStringAsync();
 
         if (!createRes.IsSuccessStatusCode)
@@ -632,7 +681,7 @@ public class BoxService
             };
             partReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            var partRes = await HttpClient.SendAsync(partReq);
+            var partRes = await Http.SendAsync(partReq);
             var partJson = await partRes.Content.ReadAsStringAsync();
 
             if (!partRes.IsSuccessStatusCode)
@@ -667,7 +716,7 @@ public class BoxService
         commitReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         commitReq.Headers.Add("Digest", $"sha={fullShaBase64}");
 
-        var commitRes = await HttpClient.SendAsync(commitReq);
+        var commitRes = await Http.SendAsync(commitReq);
         var commitJson = await commitRes.Content.ReadAsStringAsync();
 
         if (commitRes.StatusCode == HttpStatusCode.Created || commitRes.StatusCode == HttpStatusCode.Accepted)
@@ -834,7 +883,7 @@ public class BoxService
         using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{boxFolderId}/items?fields=id,name,type,size&limit=1000");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var res = await HttpClient.SendAsync(req);
+        var res = await Http.SendAsync(req);
         var jsonRes = await res.Content.ReadAsStringAsync();
 
         if (!res.IsSuccessStatusCode)

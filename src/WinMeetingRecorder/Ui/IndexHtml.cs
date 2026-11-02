@@ -195,6 +195,12 @@ public static class IndexHtml
             <span class="text-slate-300">停止時にBoxへ自動一括アップロード＆スプール消去</span>
           </label>
         </div>
+        <div class="flex items-center space-x-2">
+          <label class="flex items-center space-x-1.5 cursor-pointer">
+            <input type="checkbox" id="boxBypassProxy" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+            <span class="text-slate-400 text-xs">プロキシをバイパスして直接接続 (※通常はオフのまま標準プロキシ経由でOK)</span>
+          </label>
+        </div>
         <div class="flex space-x-2 pt-2">
           <button id="startBoxLoginBtn" class="flex-1 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium transition flex items-center justify-center space-x-1">
             <span>🌐</span>
@@ -205,6 +211,74 @@ public static class IndexHtml
           </button>
         </div>
         <div id="boxStatusResult" class="text-[11px] min-h-[1rem] break-all text-slate-400"></div>
+      </div>
+    </div>
+
+    <!-- 設定アコーディオン: 画面キャプチャ＆差分検知設定 -->
+    <div class="border border-slate-700 rounded-xl bg-slate-950/40 overflow-hidden">
+      <button id="toggleScreenConfigBtn" class="w-full px-4 py-2.5 text-left text-xs font-semibold text-slate-300 flex items-center justify-between hover:bg-slate-800/50 transition">
+        <span class="flex items-center space-x-2">
+          <span>📸</span>
+          <span>画面キャプチャ＆差分検知設定</span>
+          <span id="screenConfigSummaryBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400">pHash 5s</span>
+        </span>
+        <span id="screenConfigArrow" class="text-xs transition-transform transform duration-200">▼</span>
+      </button>
+
+      <div id="screenConfigSection" class="hidden p-4 border-t border-slate-800 space-y-3 text-xs">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-400 mb-1">画面チェック周期 (秒)</label>
+            <input type="number" id="screenCheckIntervalSec" min="1" max="60" value="5" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[10px] text-slate-500">監視間隔 (推奨: 5秒)</span>
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">定期強制保存 (秒)</label>
+            <input type="number" id="screenMaxIntervalSec" min="0" max="600" value="0" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[10px] text-slate-500">0で無効 (変化時のみ撮影)</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-400 mb-1">差分検知アルゴリズム</label>
+          <select id="screenDiffAlgorithm" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <option value="phash">pHash 8x8 DCT (推奨・過剰撮影防止・スライド変化検知)</option>
+            <option value="hybrid">Hybrid (輝度差＋面積比率・旧方式)</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-400 mb-1">pHash ハミング距離閾値</label>
+            <input type="number" id="screenPhashThreshold" min="1" max="64" value="5" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[10px] text-slate-500">この値を超える変化で撮影 (推奨: 5)</span>
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">最小クールダウン (秒)</label>
+            <input type="number" id="screenMinIntervalSec" min="1" max="30" value="2" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[10px] text-slate-500">連続撮影防止 (推奨: 2秒)</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-400 mb-1">JPEG保存品質 (%)</label>
+            <input type="number" id="screenJpegQuality" min="10" max="100" value="80" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[10px] text-slate-500">画質とファイルサイズ (推奨: 80)</span>
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">デバウンス安定待ち (ms)</label>
+            <input type="number" id="screenDebounceMs" min="0" max="2000" step="100" value="500" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[10px] text-slate-500">めくりアニメ完了待ち (推奨: 500ms)</span>
+          </div>
+        </div>
+
+        <div class="pt-2">
+          <button id="saveScreenConfigBtn" class="w-full py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition flex items-center justify-center space-x-1">
+            <span>💾 画面設定を保存</span>
+          </button>
+        </div>
+        <div id="screenStatusResult" class="text-[11px] min-h-[1rem] break-all text-slate-400"></div>
       </div>
     </div>
 
@@ -277,11 +351,27 @@ public static class IndexHtml
     const boxDomain = document.getElementById('boxDomain');
     const boxDevToken = document.getElementById('boxDevToken');
     const boxAutoUpload = document.getElementById('boxAutoUpload');
+    const boxBypassProxy = document.getElementById('boxBypassProxy');
     const startBoxLoginBtn = document.getElementById('startBoxLoginBtn');
     const saveBoxConfigBtn = document.getElementById('saveBoxConfigBtn');
     const boxStatusResult = document.getElementById('boxStatusResult');
     const toggleSecretVisibility = document.getElementById('toggleSecretVisibility');
     const toggleDevTokenVisibility = document.getElementById('toggleDevTokenVisibility');
+
+    // 画面キャプチャ設定 UI
+    const toggleScreenConfigBtn = document.getElementById('toggleScreenConfigBtn');
+    const screenConfigSection = document.getElementById('screenConfigSection');
+    const screenConfigArrow = document.getElementById('screenConfigArrow');
+    const screenConfigSummaryBadge = document.getElementById('screenConfigSummaryBadge');
+    const screenCheckIntervalSec = document.getElementById('screenCheckIntervalSec');
+    const screenMaxIntervalSec = document.getElementById('screenMaxIntervalSec');
+    const screenDiffAlgorithm = document.getElementById('screenDiffAlgorithm');
+    const screenPhashThreshold = document.getElementById('screenPhashThreshold');
+    const screenMinIntervalSec = document.getElementById('screenMinIntervalSec');
+    const screenJpegQuality = document.getElementById('screenJpegQuality');
+    const screenDebounceMs = document.getElementById('screenDebounceMs');
+    const saveScreenConfigBtn = document.getElementById('saveScreenConfigBtn');
+    const screenStatusResult = document.getElementById('screenStatusResult');
 
     // アップロード進捗 UI
     const uploadProgressContainer = document.getElementById('uploadProgressContainer');
@@ -315,6 +405,17 @@ public static class IndexHtml
       } else {
         boxConfigSection.classList.add('hidden');
         boxConfigArrow.style.transform = 'rotate(0deg)';
+      }
+    });
+
+    toggleScreenConfigBtn.addEventListener('click', () => {
+      const isHidden = screenConfigSection.classList.contains('hidden');
+      if (isHidden) {
+        screenConfigSection.classList.remove('hidden');
+        screenConfigArrow.style.transform = 'rotate(180deg)';
+      } else {
+        screenConfigSection.classList.add('hidden');
+        screenConfigArrow.style.transform = 'rotate(0deg)';
       }
     });
 
@@ -390,6 +491,20 @@ public static class IndexHtml
       try {
         const res = await fetch('/api/config');
         const cfg = await res.json();
+        if (cfg && cfg.screen) {
+          screenCheckIntervalSec.value = Math.max(1, Math.round((cfg.screen.checkIntervalMs || 5000) / 1000));
+          screenMaxIntervalSec.value = cfg.screen.maxIntervalSec ?? 0;
+          screenDiffAlgorithm.value = cfg.screen.diffAlgorithm || 'phash';
+          screenPhashThreshold.value = cfg.screen.phashThreshold ?? 5;
+          screenMinIntervalSec.value = cfg.screen.minIntervalSec ?? 2;
+          screenJpegQuality.value = cfg.screen.jpegQuality ?? 80;
+          screenDebounceMs.value = cfg.screen.debounceStabilityMs ?? 500;
+
+          const algoLabel = cfg.screen.diffAlgorithm === 'hybrid' ? 'Hybrid' : 'pHash';
+          const intervalSec = Math.round((cfg.screen.checkIntervalMs || 5000) / 1000);
+          screenConfigSummaryBadge.textContent = `${algoLabel} ${intervalSec}s`;
+        }
+
         if (cfg && cfg.box) {
           boxClientId.value = cfg.box.clientId || '';
           boxClientSecret.value = cfg.box.clientSecret || '';
@@ -397,6 +512,7 @@ public static class IndexHtml
           boxDomain.value = cfg.box.domain || '';
           boxDevToken.value = cfg.box.developerToken || '';
           boxAutoUpload.checked = cfg.box.autoUploadOnStop !== false;
+          boxBypassProxy.checked = cfg.box.bypassProxy === true;
         }
       } catch (err) {
         console.error('設定取得エラー:', err);
@@ -519,6 +635,7 @@ public static class IndexHtml
       cfg.box.domain = boxDomain.value.trim();
       cfg.box.developerToken = boxDevToken.value.trim();
       cfg.box.autoUploadOnStop = boxAutoUpload.checked;
+      cfg.box.bypassProxy = boxBypassProxy.checked;
 
       const res = await fetch('/api/config', {
         method: 'POST',
@@ -537,6 +654,39 @@ public static class IndexHtml
       } catch (err) {
         boxStatusResult.textContent = `❌ 保存エラー: ${err.message}`;
         boxStatusResult.className = 'text-[11px] text-rose-400';
+      }
+    });
+
+    // 画面キャプチャ設定保存
+    async function saveScreenConfig() {
+      const cfgRes = await fetch('/api/config');
+      const cfg = await cfgRes.json();
+      cfg.screen = cfg.screen || {};
+      cfg.screen.checkIntervalMs = Math.max(1000, parseInt(screenCheckIntervalSec.value, 10) * 1000);
+      cfg.screen.maxIntervalSec = Math.max(0, parseInt(screenMaxIntervalSec.value, 10));
+      cfg.screen.diffAlgorithm = screenDiffAlgorithm.value;
+      cfg.screen.phashThreshold = Math.max(1, parseInt(screenPhashThreshold.value, 10));
+      cfg.screen.minIntervalSec = Math.max(1, parseInt(screenMinIntervalSec.value, 10));
+      cfg.screen.jpegQuality = Math.min(100, Math.max(10, parseInt(screenJpegQuality.value, 10)));
+      cfg.screen.debounceStabilityMs = Math.max(0, parseInt(screenDebounceMs.value, 10));
+
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+      return await res.json();
+    }
+
+    saveScreenConfigBtn.addEventListener('click', async () => {
+      try {
+        await saveScreenConfig();
+        screenStatusResult.textContent = '💾 画面キャプチャ設定を保存しました。次回録音開始時から反映されます。';
+        screenStatusResult.className = 'text-[11px] text-emerald-400';
+        await loadConfig();
+      } catch (err) {
+        screenStatusResult.textContent = `❌ 保存エラー: ${err.message}`;
+        screenStatusResult.className = 'text-[11px] text-rose-400';
       }
     });
 

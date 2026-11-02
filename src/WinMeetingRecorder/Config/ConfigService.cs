@@ -112,6 +112,9 @@ public class ConfigService
             else
             {
                 // すでに %AppData% に存在する場合でも、Box 共通設定の未入力項目を同梱設定ファイルから補完
+                config.Screen ??= new ScreenConfig();
+                config.Box ??= new BoxConfig();
+
                 var bundled = LoadBundledConfig();
                 if (bundled != null)
                 {

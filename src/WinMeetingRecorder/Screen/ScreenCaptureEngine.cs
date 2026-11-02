@@ -17,7 +17,27 @@ public record ScreenCaptureOptions
     public int MonitorIndex { get; init; } = 0;
 
     /// <summary>
-    /// 画面変化検知閾値 (0.05 = 5%以上の変化でスライド送り等を検知)
+    /// 監視ループの周期ミリ秒 (デフォルト 5000ms = 5秒)
+    /// </summary>
+    public int CheckIntervalMs { get; init; } = 5000;
+
+    /// <summary>
+    /// 画面変化がない場合の定期キーフレーム保存間隔秒数 (0で無効化。デフォルト 0)
+    /// </summary>
+    public int MaxIntervalSec { get; init; } = 0;
+
+    /// <summary>
+    /// 差分検知アルゴリズム ("phash" = pHash 8x8 DCT, "hybrid" = 従来輝度差ハイブリッド)
+    /// </summary>
+    public string DiffAlgorithm { get; init; } = "phash";
+
+    /// <summary>
+    /// pHash ハミング距離閾値 (ハミング距離 > PhashThreshold で変化検知。デフォルト 5)
+    /// </summary>
+    public int PhashThreshold { get; init; } = 5;
+
+    /// <summary>
+    /// 従来hybrid方式の画面変化検知閾値 (0.05 = 5%以上の変化でスライド送り等を検知)
     /// </summary>
     public double DiffThreshold { get; init; } = 0.05;
 
@@ -25,16 +45,6 @@ public record ScreenCaptureOptions
     /// 変化検知後の最小クールダウン秒数 (過剰連写防止。デフォルト2秒)
     /// </summary>
     public int MinIntervalSec { get; init; } = 2;
-
-    /// <summary>
-    /// 画面変化がない場合の定期キーフレーム保存間隔秒数 (0で無効、デフォルト60秒)
-    /// </summary>
-    public int MaxIntervalSec { get; init; } = 60;
-
-    /// <summary>
-    /// 監視ループの周期ミリ秒 (デフォルト1000ms = 1秒)
-    /// </summary>
-    public int CheckIntervalMs { get; init; } = 1000;
 
     /// <summary>
     /// スライド変化検知後の安定待ちデバウンス時間ミリ秒 (切り替えアニメーション完了待ち。デフォルト500ms)
@@ -74,6 +84,7 @@ public class ScreenCaptureEngine : IDisposable
     private int _requestedMonitorIndex;
     private ScreenInfo? _targetScreen;
     private byte[]? _lastSavedThumb;
+    private ulong? _lastSavedPhash;
     private DateTime _startTime;
     private DateTime _lastCaptureTime;
     private int _capturedCount;
@@ -134,6 +145,7 @@ public class ScreenCaptureEngine : IDisposable
             LastCheckUtc = nowUtc;
             _capturedCount = 0;
             _lastSavedThumb = null;
+            _lastSavedPhash = null;
             HealthStatus = "healthy";
             LastWarningMessage = null;
             FallbackCount = 0;
@@ -286,11 +298,13 @@ public class ScreenCaptureEngine : IDisposable
 
                 var bounds = _targetScreen?.Bounds ?? ScreenService.GetPrimaryScreen().Bounds;
 
-                // 1. 現在の画面をキャプチャしサムネイル生成
+                // 1. 現在の画面をキャプチャしサムネイルおよびpHash生成
                 byte[] currentThumb;
+                ulong currentPhash;
                 using (var currentBmp = CaptureScreenBitmap(bounds))
                 {
                     currentThumb = ScreenDiffDetector.CreateGrayscaleThumbnail(currentBmp);
+                    currentPhash = ScreenDiffDetector.ComputePhash(currentBmp);
                 }
 
                 // もし外部モニター指定中に完全な真っ黒画面が3回連続した場合は、モニター領域消失とみなしてメイン画面へフォールバック
@@ -340,45 +354,71 @@ public class ScreenCaptureEngine : IDisposable
 
                 HealthStatus = "healthy";
 
-                // 2. 前回収得サムネイルとの差分計算
-                double diff = ScreenDiffDetector.ComputeDifference(_lastSavedThumb, currentThumb);
+                // 2. 差分計算 & 判定
                 int elapsedSec = (int)(DateTime.UtcNow - _startTime).TotalSeconds;
                 int timeSinceLastCapture = (int)(DateTime.UtcNow - _lastCaptureTime).TotalSeconds;
 
-                OnDiffCalculated?.Invoke(diff, elapsedSec);
-
-                // 3. 判定ロジック
                 bool shouldCapture = false;
                 string reason = "";
+                double reportDiff = 0.0;
 
-                if (diff >= options.DiffThreshold && timeSinceLastCapture >= options.MinIntervalSec)
+                bool isPhashMode = string.Equals(options.DiffAlgorithm, "phash", StringComparison.OrdinalIgnoreCase);
+
+                if (isPhashMode)
                 {
-                    // スライド変化等を検知
-                    shouldCapture = true;
-                    reason = "diff";
+                    // pHash (8x8 DCT) ハミング距離判定 (Pythonツール互換)
+                    int hammingDist = _lastSavedPhash.HasValue
+                        ? ScreenDiffDetector.ComputeHammingDistance(_lastSavedPhash.Value, currentPhash)
+                        : 64;
 
-                    // デバウンス待機: アニメーション・ページめくり効果完了まで待つ
-                    if (options.DebounceStabilityMs > 0)
+                    reportDiff = hammingDist;
+                    OnDiffCalculated?.Invoke((double)hammingDist / 64.0, elapsedSec);
+
+                    if (hammingDist > options.PhashThreshold && timeSinceLastCapture >= options.MinIntervalSec)
                     {
-                        await Task.Delay(options.DebounceStabilityMs, ct);
+                        shouldCapture = true;
+                        reason = "phash";
+                        Console.WriteLine($"[ScreenCapture] 📸 pHash画面変化検知! (ハミング距離: {hammingDist} > {options.PhashThreshold})");
                     }
                 }
-                else if (options.MaxIntervalSec > 0 && timeSinceLastCapture >= options.MaxIntervalSec)
+                else
                 {
-                    // 定期キーフレーム (長時間の議論でも必ず1分に1枚は証跡を残す)
+                    // 従来ハイブリッド方式 (全体平均輝度差＋変化面積比率)
+                    double diff = ScreenDiffDetector.ComputeDifference(_lastSavedThumb, currentThumb);
+                    reportDiff = diff;
+                    OnDiffCalculated?.Invoke(diff, elapsedSec);
+
+                    if (diff >= options.DiffThreshold && timeSinceLastCapture >= options.MinIntervalSec)
+                    {
+                        shouldCapture = true;
+                        reason = "diff";
+                        Console.WriteLine($"[ScreenCapture] 📸 ハイブリッド画面変化検知! (差分: {diff * 100:F1}% >= {options.DiffThreshold * 100:F1}%)");
+                    }
+                }
+
+                // 3. 定期キーフレーム判定 (MaxIntervalSec > 0 の場合のみ)
+                if (!shouldCapture && options.MaxIntervalSec > 0 && timeSinceLastCapture >= options.MaxIntervalSec)
+                {
                     shouldCapture = true;
                     reason = "timer";
+                    Console.WriteLine($"[ScreenCapture] ⏱️ 定期キーフレーム撮影 (前回撮影から {timeSinceLastCapture}秒経過)");
                 }
 
                 // 4. 撮影＆フル解像度保存
                 if (shouldCapture && !ct.IsCancellationRequested)
                 {
+                    // デバウンス待機: アニメーション・ページめくり効果完了まで待つ (定期保存以外)
+                    if (reason != "timer" && options.DebounceStabilityMs > 0)
+                    {
+                        await Task.Delay(options.DebounceStabilityMs, ct);
+                    }
+
                     lock (_lock)
                     {
                         if (IsCapturing)
                         {
                             var latestBounds = _targetScreen?.Bounds ?? bounds;
-                            CaptureAndSaveInternal(latestBounds, reason, diff, options.JpegQuality);
+                            CaptureAndSaveInternal(latestBounds, reason, reportDiff, options.JpegQuality);
                         }
                     }
                 }
@@ -444,8 +484,9 @@ public class ScreenCaptureEngine : IDisposable
     {
         using var bmp = CaptureScreenBitmap(bounds);
 
-        // 次回比較用サムネイルを更新
+        // 次回比較用サムネイル・pHashを更新
         _lastSavedThumb = ScreenDiffDetector.CreateGrayscaleThumbnail(bmp);
+        _lastSavedPhash = ScreenDiffDetector.ComputePhash(bmp);
 
         var now = DateTime.Now;
         var elapsedSec = (int)(DateTime.UtcNow - _startTime).TotalSeconds;

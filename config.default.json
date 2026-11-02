@@ -1,9 +1,20 @@
 {
+  "Screen": {
+    "CheckIntervalMs": 5000,
+    "MaxIntervalSec": 0,
+    "DiffAlgorithm": "phash",
+    "PhashThreshold": 5,
+    "DiffThreshold": 0.05,
+    "MinIntervalSec": 2,
+    "DebounceStabilityMs": 500,
+    "JpegQuality": 80
+  },
   "Box": {
     "ClientId": "mmlizw2yk4vnqabn5nzxl0724umwljal",
     "ClientSecret": "qbc5Pa4nKGo7srCQUcY7uN5awMKcTKGa",
     "SharedFolderId": "433029580764",
     "Domain": "",
-    "AutoUploadOnStop": true
+    "AutoUploadOnStop": true,
+    "BypassProxy": false
   }
 }

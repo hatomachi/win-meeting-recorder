@@ -222,15 +222,18 @@ public static class Program
                 {
                     engine.OnCaptured += (evt) =>
                     {
-                        Console.WriteLine($"📸 撮影検知! [{evt.Timestamp:HH:mm:ss}] 原因: {evt.Reason} (差分: {evt.Diff * 100:F1}%) -> {Path.GetFileName(evt.FilePath)}");
+                        string diffText = evt.Reason == "phash" ? $"ハミング距離: {evt.Diff:F0}" : $"差分: {evt.Diff * 100:F1}%";
+                        Console.WriteLine($"📸 撮影検知! [{evt.Timestamp:HH:mm:ss}] 原因: {evt.Reason} ({diffText}) -> {Path.GetFileName(evt.FilePath)}");
                     };
 
                     var options = new ScreenCaptureOptions
                     {
                         MonitorIndex = monitorIdx,
+                        CheckIntervalMs = 5000,
                         MinIntervalSec = 2,
-                        MaxIntervalSec = 30,
-                        DiffThreshold = 0.03,
+                        MaxIntervalSec = 0,
+                        DiffAlgorithm = "phash",
+                        PhashThreshold = 5,
                         JpegQuality = 80L
                     };
 

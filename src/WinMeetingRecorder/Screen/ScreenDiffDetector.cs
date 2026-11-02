@@ -1,19 +1,152 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace WinMeetingRecorder.Screen;
 
 /// <summary>
-/// 画面のサムネイル生成および差分判定アルゴリズム
+/// 画面のサムネイル生成および差分判定アルゴリズム (pHash 8x8 DCT / ハイブリッド差分)
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class ScreenDiffDetector
 {
     public const int DefaultThumbnailWidth = 128;
     public const int DefaultThumbnailHeight = 72;
+
+    // pHash 用事前計算コサイン変換テーブル (k in [0..7], n in [0..31])
+    private static readonly double[,] CosTable = InitializeCosTable();
+
+    private static double[,] InitializeCosTable()
+    {
+        var table = new double[8, 32];
+        for (int k = 0; k < 8; k++)
+        {
+            for (int n = 0; n < 32; n++)
+            {
+                table[k, n] = Math.Cos((Math.PI * k * (2 * n + 1)) / 64.0);
+            }
+        }
+        return table;
+    }
+
+    /// <summary>
+    /// 画像から 64ビットの知覚ハッシュ (pHash 8x8 DCT) を計算します。
+    /// Python の imagehash.phash(image, hash_size=8, highfreq_factor=4) と互換性のあるアルゴリズムです。
+    /// 1. 画像を 32x32 に縮小してグレースケール化
+    /// 2. 2次元離散コサイン変換 (2D DCT-II) を計算
+    /// 3. 左上 8x8 の低周波成分を抽出
+    /// 4. 64成分の中央値 (Median) を基準に各ビットを 0/1 判定
+    /// </summary>
+    public static ulong ComputePhash(Bitmap srcBmp, int hashSize = 8, int highfreqFactor = 4)
+    {
+        int imgSize = hashSize * highfreqFactor; // 32
+        if (imgSize != 32)
+        {
+            throw new ArgumentException("現在 hashSize=8, highfreqFactor=4 (imgSize=32) に最適化されています。");
+        }
+
+        // 1. 32x32 に高品質リサイズ
+        using var thumbBmp = new Bitmap(imgSize, imgSize, PixelFormat.Format24bppRgb);
+        using (var g = Graphics.FromImage(thumbBmp))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            g.PixelOffsetMode = PixelOffsetMode.HighSpeed;
+            g.SmoothingMode = SmoothingMode.HighSpeed;
+            g.DrawImage(srcBmp, 0, 0, imgSize, imgSize);
+        }
+
+        BitmapData data = thumbBmp.LockBits(
+            new Rectangle(0, 0, imgSize, imgSize),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format24bppRgb);
+
+        double[,] pixels = new double[imgSize, imgSize];
+        try
+        {
+            int stride = data.Stride;
+            int absStride = Math.Abs(stride);
+            byte[] raw = new byte[absStride * imgSize];
+            Marshal.Copy(data.Scan0, raw, 0, raw.Length);
+
+            for (int y = 0; y < imgSize; y++)
+            {
+                int rowStart = y * stride;
+                for (int x = 0; x < imgSize; x++)
+                {
+                    int px = rowStart + (x * 3);
+                    byte b = raw[px];
+                    byte g = raw[px + 1];
+                    byte r = raw[px + 2];
+                    // ITU-R BT.601 グレースケール変換 (0.0〜255.0)
+                    pixels[y, x] = (r * 299 + g * 587 + b * 114) / 1000.0;
+                }
+            }
+        }
+        finally
+        {
+            thumbBmp.UnlockBits(data);
+        }
+
+        // 2. 2D DCT-II (低周波 8x8 成分のみ抽出)
+        // 横方向 1D DCT (32行 x 8列)
+        double[,] intermediate = new double[32, 8];
+        for (int y = 0; y < 32; y++)
+        {
+            for (int v = 0; v < 8; v++)
+            {
+                double sum = 0.0;
+                for (int x = 0; x < 32; x++)
+                {
+                    sum += pixels[y, x] * CosTable[v, x];
+                }
+                intermediate[y, v] = sum * 2.0;
+            }
+        }
+
+        // 縦方向 1D DCT (8行 x 8列)
+        double[] values = new double[64];
+        int idx = 0;
+        for (int u = 0; u < 8; u++)
+        {
+            for (int v = 0; v < 8; v++)
+            {
+                double sum = 0.0;
+                for (int y = 0; y < 32; y++)
+                {
+                    sum += intermediate[y, v] * CosTable[u, y];
+                }
+                values[idx++] = sum * 2.0;
+            }
+        }
+
+        // 3. 中央値 (Median) を算出
+        double[] sorted = (double[])values.Clone();
+        Array.Sort(sorted);
+        double median = (sorted[31] + sorted[32]) / 2.0;
+
+        // 4. 64ビットハッシュを生成 (各DCT成分 > median で 1)
+        ulong hash = 0UL;
+        for (int i = 0; i < 64; i++)
+        {
+            if (values[i] > median)
+            {
+                hash |= (1UL << i);
+            }
+        }
+
+        return hash;
+    }
+
+    /// <summary>
+    /// 2つの 64ビット知覚ハッシュ間のハミング距離 (異なるビット数: 0〜64) を算出します
+    /// </summary>
+    public static int ComputeHammingDistance(ulong hash1, ulong hash2)
+    {
+        return BitOperations.PopCount(hash1 ^ hash2);
+    }
 
     /// <summary>
     /// キャプチャした元画像から低解像度グレースケール配列 (128x72 = 9216バイト) を生成します。
