@@ -921,6 +921,7 @@ public static class Program
             {
                 isRecording = workflow.IsRecording,
                 sessionId = workflow.ActiveSession?.SessionId,
+                memo = workflow.CurrentMemo,
                 currentFile = audioEngine.CurrentOutputFile,
                 isCapturing = screenEngine.IsCapturing,
                 capturedCount = screenEngine.CapturedCount,
@@ -941,7 +942,8 @@ public static class Program
                 req?.CaptureDeviceId,
                 req?.MonitorIndex,
                 req?.EnableScreenCapture,
-                req?.ThemeId);
+                req?.ThemeId,
+                req?.Memo);
 
             var res = await workflow.StartRecordingAsync(opt);
             if (!res.Success)
@@ -990,12 +992,19 @@ public static class Program
             });
         });
 
+        // API: 録音中メモのリアルタイム更新
+        app.MapPost("/api/record/memo", (RecordingWorkflowService workflow, SessionMemoRequest req) =>
+        {
+            workflow.UpdateCurrentMemo(req.Memo);
+            return Results.Ok(new { message = "メモを更新しました。", memo = req.Memo });
+        });
+
         // API: 録音停止 ＆ パイプライン自動化 (ワークフロー統合)
         app.MapPost("/api/record/stop", async (
             RecordingWorkflowService workflow, 
             RecordStopRequest? req) =>
         {
-            var res = await workflow.StopRecordingAsync(req?.AutoUpload, req?.ThemeId);
+            var res = await workflow.StopRecordingAsync(req?.AutoUpload, req?.ThemeId, req?.Memo);
             if (!res.Success)
             {
                 return Results.BadRequest(new { error = res.Message });
@@ -1061,6 +1070,17 @@ public static class Program
                 return Results.Ok(new { message = $"セッション {sessionId} を削除しました。" });
             }
             return Results.NotFound(new { error = $"指定されたセッションが見つからないか削除できませんでした: {sessionId}" });
+        });
+
+        // API: 保管中の未送信スプールのメモを更新
+        app.MapPut("/api/sessions/{sessionId}/memo", (string sessionId, SpoolService spool, SessionMemoRequest req) =>
+        {
+            bool updated = spool.UpdateSessionMemo(sessionId, req.Memo);
+            if (updated)
+            {
+                return Results.Ok(new { message = "メモを更新しました。", sessionId, memo = req.Memo });
+            }
+            return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {sessionId}" });
         });
 
         // API: 直近の動作ログ一覧取得
@@ -1179,11 +1199,15 @@ public record RecordStartRequest(
     string? CaptureDeviceId, 
     int? MonitorIndex, 
     bool? EnableScreenCapture,
-    string? ThemeId = null);
+    string? ThemeId = null,
+    string? Memo = null);
 
 public record RecordStopRequest(
     bool? AutoUpload = null, 
-    string? ThemeId = null);
+    string? ThemeId = null,
+    string? Memo = null);
+
+public record SessionMemoRequest(string? Memo);
 
 public record BoxSelectThemeRequest(string ThemeId);
 

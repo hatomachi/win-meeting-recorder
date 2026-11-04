@@ -759,6 +759,7 @@ public class BoxService
             {
                 SessionId = metadata.SessionId,
                 ThemeId = theme.Id,
+                Memo = metadata.Memo ?? "",
                 StartTime = startTimeStr,
                 DurationSec = (int)Math.Round(metadata.DurationSeconds),
                 AudioFile = audioFileName,
@@ -796,9 +797,10 @@ public class BoxService
 
             var folderUrl = boxConfig.GetFolderUrl(boxFolderId);
             var startTimeDisplay = metadata.StartTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            var memoDisplay = !string.IsNullOrWhiteSpace(metadata.Memo) ? $" [メモ: {metadata.Memo}]" : "";
 
             // ★目立つログ出力（日時・テーマ・ファイル数・Boxリンク）
-            AppLogger.Info($"✅ 【Box格納完了】テーマ: {theme.Name} ｜ {startTimeDisplay} 会議 (計{totalFiles}ファイル)");
+            AppLogger.Info($"✅ 【Box格納完了】テーマ: {theme.Name}{memoDisplay} ｜ {startTimeDisplay} 会議 (計{totalFiles}ファイル)");
             AppLogger.Info($"🔗 Boxフォルダ: {folderUrl}");
 
             // 7. 実在確認完了後のみ、ローカルスプール一時ファイルを自動クリーンアップ

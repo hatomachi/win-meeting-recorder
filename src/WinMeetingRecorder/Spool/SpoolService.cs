@@ -36,7 +36,7 @@ public class SpoolService
     /// <summary>
     /// 新規会議セッションを初期化し、スプールディレクトリを作成します
     /// </summary>
-    public MeetingSessionMetadata CreateSession(int monitorIndex = 0, string? monitorName = null)
+    public MeetingSessionMetadata CreateSession(int monitorIndex = 0, string? monitorName = null, string? memo = null)
     {
         lock (_lock)
         {
@@ -50,6 +50,7 @@ public class SpoolService
             {
                 SessionId = sessionId,
                 SpoolDirectory = sessionDir,
+                Memo = memo,
                 StartTime = now,
                 MonitorIndex = monitorIndex,
                 MonitorName = monitorName
@@ -298,6 +299,7 @@ public class SpoolService
             {
                 SessionId = dirInfo.Name,
                 DirectoryPath = subDir,
+                Memo = meta?.Memo,
                 CreatedAt = meta?.StartTime ?? dirInfo.CreationTime,
                 ScreenshotCount = meta?.Images.Count ?? 0,
                 HasAudio = meta?.HasAudio ?? File.Exists(Path.Combine(subDir, "meeting_audio.wav")),
@@ -310,6 +312,22 @@ public class SpoolService
         }
 
         return list.OrderByDescending(x => x.CreatedAt).ToList();
+    }
+
+    /// <summary>
+    /// セッションのメモを更新・保存します
+    /// </summary>
+    public bool UpdateSessionMemo(string sessionDirOrId, string? memo)
+    {
+        lock (_lock)
+        {
+            var metadata = GetSessionMetadata(sessionDirOrId);
+            if (metadata == null) return false;
+
+            metadata.Memo = string.IsNullOrWhiteSpace(memo) ? null : memo.Trim();
+            SaveMetadata(metadata);
+            return true;
+        }
     }
 
     /// <summary>

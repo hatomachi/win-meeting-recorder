@@ -403,14 +403,19 @@ public class GitLabService
         var titleTime = metadata != null && metadata.StartTime != default 
             ? metadata.StartTime.ToString("yyyy-MM-dd HH:mm:ss") 
             : sessionId;
+        var titleMemo = !string.IsNullOrWhiteSpace(metadata?.Memo) ? $" - {metadata.Memo}" : "";
 
-        sb.AppendLine($"# 🎙️ 会議記録: {titleTime}");
+        sb.AppendLine($"# 🎙️ 会議記録: {titleTime}{titleMemo}");
         sb.AppendLine();
         sb.AppendLine($"> この会議記録は **WinMeetingRecorder** により自動記録・生成されました。");
         sb.AppendLine();
         sb.AppendLine("## 📋 会議サマリー");
         sb.AppendLine();
         sb.AppendLine($"- **セッションID**: `{sessionId}`");
+        if (!string.IsNullOrWhiteSpace(metadata?.Memo))
+        {
+            sb.AppendLine($"- **メモ**: {metadata.Memo}");
+        }
         if (metadata != null)
         {
             sb.AppendLine($"- **記録開始**: {metadata.StartTime:yyyy-MM-dd HH:mm:ss}");

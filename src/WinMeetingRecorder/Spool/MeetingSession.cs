@@ -7,6 +7,7 @@ public class MeetingSessionMetadata
 {
     public string SessionId { get; set; } = "";
     public string SpoolDirectory { get; set; } = "";
+    public string? Memo { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime? EndTime { get; set; }
     public double DurationSeconds { get; set; }
@@ -59,6 +60,7 @@ public class PendingSessionSummary
 {
     public string SessionId { get; set; } = "";
     public string DirectoryPath { get; set; } = "";
+    public string? Memo { get; set; }
     public DateTime CreatedAt { get; set; }
     public int ScreenshotCount { get; set; }
     public bool HasAudio { get; set; }

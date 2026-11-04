@@ -39,7 +39,8 @@ public record RecordStartOptions(
     string? CaptureDeviceId = null, 
     int? MonitorIndex = null, 
     bool? EnableScreenCapture = null,
-    string? ThemeId = null);
+    string? ThemeId = null,
+    string? Memo = null);
 
 public record RecordingHealthStatus(
     string OverallStatus,
@@ -73,6 +74,7 @@ public class RecordingWorkflowService
     private ActiveSessionState? _activeSession;
     private DateTime? _recordStartTime;
     private string? _selectedThemeId;
+    private string? _currentMemo;
 
     private CancellationTokenSource? _watchdogCts;
     private bool _silenceWarningNotified;
@@ -136,6 +138,30 @@ public class RecordingWorkflowService
         {
             _selectedThemeId = themeId;
             Console.WriteLine($"[Workflow] 録音セッションの選択テーマを更新しました: {themeId}");
+        }
+    }
+
+    public string? CurrentMemo
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _currentMemo;
+            }
+        }
+    }
+
+    public void UpdateCurrentMemo(string? memo)
+    {
+        lock (_lock)
+        {
+            _currentMemo = string.IsNullOrWhiteSpace(memo) ? null : memo.Trim();
+            if (_activeSession != null)
+            {
+                _spoolService.UpdateSessionMemo(_activeSession.SessionId, _currentMemo);
+            }
+            Console.WriteLine($"[Workflow] 録音セッションのメモを更新しました: {_currentMemo ?? "(空)"}");
         }
     }
 
@@ -296,9 +322,10 @@ public class RecordingWorkflowService
             var screenInfo = ScreenService.ResolveScreen(monitorIdx);
 
             _selectedThemeId = options?.ThemeId ?? _configService.LoadConfig().Box.SelectedThemeId;
+            _currentMemo = string.IsNullOrWhiteSpace(options?.Memo) ? null : options.Memo.Trim();
 
             // スプールディレクトリとメタデータの初期化
-            var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name);
+            var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name, _currentMemo);
             _activeSession = new ActiveSessionState(session.SessionId, session.SpoolDirectory);
             _recordStartTime = DateTime.Now;
             _silenceWarningNotified = false;
@@ -339,7 +366,8 @@ public class RecordingWorkflowService
                 UpdateProgress("recording", "記録中", 0);
 
                 var themeName = _configService.LoadConfig().Box.Themes.FirstOrDefault(t => t.Id == _selectedThemeId)?.Name ?? _selectedThemeId ?? "既定";
-                AppLogger.Info($"🎙️ 会議記録を開始しました (テーマ: {themeName} / セッション: {session.SessionId})");
+                var memoInfo = !string.IsNullOrWhiteSpace(_currentMemo) ? $" [メモ: {_currentMemo}]" : "";
+                AppLogger.Info($"🎙️ 会議記録を開始しました (テーマ: {themeName}{memoInfo} / セッション: {session.SessionId})");
                 RecordingStarted?.Invoke(session.SessionId);
 
                 return Task.FromResult(new RecordingStartResult(
@@ -477,10 +505,11 @@ public class RecordingWorkflowService
     /// <summary>
     /// 記録を停止し、自動パイプライン (MP3化 -> Boxアップロード) を実行する
     /// </summary>
-    public async Task<RecordingStopResult> StopRecordingAsync(bool? autoUpload = null, string? overrideThemeId = null)
+    public async Task<RecordingStopResult> StopRecordingAsync(bool? autoUpload = null, string? overrideThemeId = null, string? memo = null)
     {
         string? stoppingSessionId;
         string? stoppingSessionDir;
+        string? stoppingMemo;
 
         lock (_lock)
         {
@@ -491,8 +520,10 @@ public class RecordingWorkflowService
 
             stoppingSessionId = _activeSession?.SessionId;
             stoppingSessionDir = _activeSession?.SpoolDirectory;
+            stoppingMemo = !string.IsNullOrWhiteSpace(memo) ? memo.Trim() : _currentMemo;
             _activeSession = null;
             _recordStartTime = null;
+            _currentMemo = null;
         }
 
         StopWatchdogLoop();
@@ -512,7 +543,8 @@ public class RecordingWorkflowService
 
             if (stoppingSessionId != null)
             {
-                AppLogger.Info($"⏹️ 会議記録を停止しました (セッション: {stoppingSessionId} / スクショ: {_screenEngine.CapturedCount}枚)");
+                var memoInfo = !string.IsNullOrWhiteSpace(stoppingMemo) ? $" [メモ: {stoppingMemo}]" : "";
+                AppLogger.Info($"⏹️ 会議記録を停止しました (セッション: {stoppingSessionId}{memoInfo} / スクショ: {_screenEngine.CapturedCount}枚)");
                 RecordingStopped?.Invoke(stoppingSessionId);
             }
 
@@ -545,6 +577,10 @@ public class RecordingWorkflowService
                 metadata = _spoolService.FinishSession(stoppingSessionDir);
                 if (metadata != null)
                 {
+                    if (!string.IsNullOrWhiteSpace(stoppingMemo))
+                    {
+                        metadata.Memo = stoppingMemo;
+                    }
                     metadata.Pipeline.Audio = "success";
                     metadata.Pipeline.LastStep = "audio";
                     _spoolService.UpdateMetadata(metadata);

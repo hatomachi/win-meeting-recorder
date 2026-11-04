@@ -14,6 +14,9 @@ public class BoxMetaJson
     [JsonPropertyName("theme_id")]
     public string ThemeId { get; set; } = "";
 
+    [JsonPropertyName("memo")]
+    public string? Memo { get; set; }
+
     [JsonPropertyName("start_time")]
     public string StartTime { get; set; } = "";
 

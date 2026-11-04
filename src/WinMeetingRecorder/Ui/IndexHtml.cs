@@ -116,6 +116,24 @@ public static class IndexHtml
         </div>
       </div>
 
+      <!-- 会議メモ入力 (1行・任意) -->
+      <div class="pt-1 border-t border-slate-800/80">
+        <div class="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+          <label for="meetingMemoInput" class="flex items-center space-x-1 font-medium">
+            <span>📝</span>
+            <span>会議メモ / 件名 (1行・任意)</span>
+          </label>
+          <span id="memoSaveStatus" class="text-[10px] text-emerald-400 opacity-0 transition-opacity">自動保存済み ✓</span>
+        </div>
+        <input 
+          type="text" 
+          id="meetingMemoInput" 
+          placeholder="例: ○○定例、△△さん1on1 等 (空欄でもOK)" 
+          class="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition" 
+        />
+        <p class="text-[10px] text-slate-500 mt-1">※ 打合せ前・中いつでも入力可能。空欄でも保存・送信できます。</p>
+      </div>
+
       <!-- 4重保護ガード・ヘルスモニター表示 -->
       <div id="healthGuardBar" class="hidden pt-1 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
         <div class="flex items-center space-x-2 text-emerald-400" id="healthStatusLabel">
@@ -336,6 +354,8 @@ public static class IndexHtml
     const shotCountText = document.getElementById('shotCountText');
     const audioLevelBar = document.getElementById('audioLevelBar');
     const audioLevelText = document.getElementById('audioLevelText');
+    const meetingMemoInput = document.getElementById('meetingMemoInput');
+    const memoSaveStatus = document.getElementById('memoSaveStatus');
 
     // Box UI
     const boxAuthBadge = document.getElementById('boxAuthBadge');
@@ -704,12 +724,14 @@ public static class IndexHtml
     async function startRecording() {
       recordBtn.disabled = true;
       try {
+        const currentMemoVal = meetingMemoInput.value.trim();
         const body = {
           playbackDeviceId: playbackSelect.value || null,
           captureDeviceId: captureSelect.value || null,
           monitorIndex: parseInt(screenSelect.value, 10),
           enableScreenCapture: true,
-          themeId: themeSelect.value || null
+          themeId: themeSelect.value || null,
+          memo: currentMemoVal || null
         };
 
         const res = await fetch('/api/record/start', {
@@ -737,9 +759,12 @@ public static class IndexHtml
       const selectedOption = themeSelect.options[themeSelect.selectedIndex];
       const currentThemeName = selectedOption ? selectedOption.text : '未設定';
       const currentThemeId = themeSelect.value || null;
+      const currentMemoVal = meetingMemoInput.value.trim();
+      const memoText = currentMemoVal ? `\n📝 メモ: 【${currentMemoVal}】` : '';
 
       const confirmMsg =
-        `会議記録を停止し、Boxへアップロードしますか？\n\n` +
+        `会議記録を停止し、Boxへアップロードしますか？\n` +
+        `${memoText}\n\n` +
         `📁 保存先テーマ: 【${currentThemeName}】\n\n` +
         `・[OK]: このテーマで停止し、Boxへ自動アップロードします。\n` +
         `・[キャンセル]: アップロードを保留し、ローカルに保管します。\n` +
@@ -773,7 +798,8 @@ public static class IndexHtml
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             autoUpload: doUpload,
-            themeId: currentThemeId
+            themeId: currentThemeId,
+            memo: currentMemoVal || null
           })
         });
         const data = await res.json();
@@ -781,6 +807,7 @@ public static class IndexHtml
         updateRecordingUI(false);
 
         if (res.ok) {
+          meetingMemoInput.value = '';
           if (!doUpload) {
             uploadProgressBar.style.width = '100%';
             uploadProgressBar.className = 'bg-amber-500 h-2.5 rounded-full';
@@ -830,6 +857,44 @@ public static class IndexHtml
       } catch (err) {
         console.error('スクショ撮影エラー:', err);
       }
+    });
+
+    // 会議メモのリアルタイム同期 (入力デバウンス ＆ フォーカスアウト時)
+    let memoDebounceTimer = null;
+    meetingMemoInput.addEventListener('input', () => {
+      if (!isRecording) return;
+      clearTimeout(memoDebounceTimer);
+      memoDebounceTimer = setTimeout(async () => {
+        try {
+          const memo = meetingMemoInput.value.trim();
+          const res = await fetch('/api/record/memo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ memo: memo || null })
+          });
+          if (res.ok) {
+            memoSaveStatus.style.opacity = '1';
+            setTimeout(() => { memoSaveStatus.style.opacity = '0'; }, 1500);
+          }
+        } catch { /* ignore */ }
+      }, 500);
+    });
+
+    meetingMemoInput.addEventListener('change', async () => {
+      if (!isRecording) return;
+      clearTimeout(memoDebounceTimer);
+      try {
+        const memo = meetingMemoInput.value.trim();
+        const res = await fetch('/api/record/memo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memo: memo || null })
+        });
+        if (res.ok) {
+          memoSaveStatus.style.opacity = '1';
+          setTimeout(() => { memoSaveStatus.style.opacity = '0'; }, 1500);
+        }
+      } catch { /* ignore */ }
     });
 
     function updateRecordingUI(recording) {
@@ -904,6 +969,10 @@ public static class IndexHtml
             shotCountText.textContent = `撮影: ${data.capturedCount} 枚`;
           }
 
+          if (data.isRecording && data.memo !== undefined && document.activeElement !== meetingMemoInput) {
+            meetingMemoInput.value = data.memo || '';
+          }
+
           // パイプライン進捗（アップロード進捗）のリアルタイム反映
           if (data.pipeline) {
             const p = data.pipeline;
@@ -946,11 +1015,25 @@ public static class IndexHtml
       }, 500);
     }
 
+    // HTMLエスケープヘルパー
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
     // 未送信スプール
+    let currentPendingSessions = [];
+
     async function loadPendingSessions() {
       try {
         const res = await fetch('/api/sessions/pending');
         const list = await res.json();
+        currentPendingSessions = list || [];
         pendingList.innerHTML = '';
         if (!list || list.length === 0) {
           pendingList.innerHTML = '<div class="text-[11px] text-slate-500">未送信のスプールはありません。</div>';
@@ -959,15 +1042,39 @@ public static class IndexHtml
 
         list.forEach(item => {
           const row = document.createElement('div');
-          row.className = 'flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800';
+          row.className = 'p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5';
+          const memoEscaped = escapeHtml(item.memo || '');
+          const hasMemoBadge = item.memo
+            ? `<span class="px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-700/60 text-indigo-300 text-[10px] font-normal truncate max-w-[220px]" title="${memoEscaped}">📝 ${memoEscaped}</span>`
+            : '';
+
           row.innerHTML = `
-            <div>
-              <div class="font-mono text-slate-200 text-xs">${item.sessionId}</div>
-              <div class="text-[10px] text-slate-400">スクショ ${item.screenshotCount}枚 / ${(item.totalSizeBytes / 1024 / 1024).toFixed(1)}MB</div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span class="font-mono text-slate-200 text-xs font-semibold">${item.sessionId}</span>
+                ${hasMemoBadge}
+              </div>
+              <div class="flex items-center space-x-1.5">
+                <button onclick="manualUploadBox('${item.sessionId}')" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold transition">Box送信</button>
+                <button onclick="deleteSession('${item.sessionId}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 text-[10px] transition">削除</button>
+              </div>
             </div>
-            <div class="flex items-center space-x-1.5">
-              <button onclick="manualUploadBox('${item.sessionId}')" class="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold">Box送信</button>
-              <button onclick="deleteSession('${item.sessionId}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 text-[10px]">削除</button>
+            <div class="flex items-center space-x-2 text-[10px] text-slate-400">
+              <span>📷 スクショ ${item.screenshotCount}枚</span>
+              <span>•</span>
+              <span>💾 ${(item.totalSizeBytes / 1024 / 1024).toFixed(1)}MB</span>
+            </div>
+            <div class="flex items-center space-x-1.5 pt-0.5">
+              <span class="text-[11px] text-slate-500">📝</span>
+              <input 
+                type="text" 
+                value="${memoEscaped}" 
+                placeholder="会議メモを追加・編集 (例: A社定例)..." 
+                class="flex-1 bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded px-2 py-1 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none transition" 
+                onchange="updateSpoolMemo('${item.sessionId}', this.value, this)" 
+                onkeydown="if(event.key==='Enter') this.blur();"
+              />
+              <span class="spool-memo-badge text-[10px] text-emerald-400 opacity-0 transition-opacity">✓</span>
             </div>
           `;
           pendingList.appendChild(row);
@@ -977,13 +1084,38 @@ public static class IndexHtml
       }
     }
 
+    window.updateSpoolMemo = async function(sessionId, memo, inputEl) {
+      const badge = inputEl.parentElement.querySelector('.spool-memo-badge');
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/memo`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memo: memo ? memo.trim() : null })
+        });
+        if (res.ok) {
+          if (badge) {
+            badge.style.opacity = '1';
+            setTimeout(() => { badge.style.opacity = '0'; }, 1500);
+          }
+          await loadPendingSessions();
+          await loadLogs();
+        }
+      } catch (err) {
+        console.error('スプールメモ更新エラー:', err);
+      }
+    };
+
     window.manualUploadBox = async function(sessionId) {
       const selectedOption = themeSelect.options[themeSelect.selectedIndex];
       const currentThemeName = selectedOption ? selectedOption.text : '未設定';
       const currentThemeId = themeSelect.value || null;
 
+      const item = currentPendingSessions.find(s => s.sessionId === sessionId);
+      const memoText = item && item.memo ? `\n📝 メモ: 【${item.memo}】` : '';
+
       const confirmMsg =
-        `セッション ${sessionId} をBoxへアップロードしますか？\n\n` +
+        `セッション ${sessionId} をBoxへアップロードしますか？\n` +
+        `${memoText}\n\n` +
         `📁 保存先テーマ: 【${currentThemeName}】\n\n` +
         `※ テーマが異なる場合は「キャンセル」を押し、上の会議テーマ選択を変更してから再度押してください。`;
 
