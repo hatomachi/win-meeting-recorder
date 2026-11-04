@@ -12,8 +12,19 @@
   "Box": {
     "ClientId": "mmlizw2yk4vnqabn5nzxl0724umwljal",
     "ClientSecret": "qbc5Pa4nKGo7srCQUcY7uN5awMKcTKGa",
-    "SharedFolderId": "433029580764",
     "Domain": "",
+    "Themes": [
+      {
+        "id": "employee_only",
+        "name": "社員限定",
+        "box_id": "433029580764"
+      },
+      {
+        "id": "all_share",
+        "name": "全体共有",
+        "box_id": "433029580764"
+      }
+    ],
     "AutoUploadOnStop": true,
     "BypassProxy": false
   }

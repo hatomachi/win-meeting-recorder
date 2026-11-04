@@ -1,3 +1,5 @@
+using WinMeetingRecorder.Box;
+
 namespace WinMeetingRecorder.Config;
 
 /// <summary>
@@ -64,4 +66,19 @@ public class AppConfig
     public GitLabConfig GitLab { get; set; } = new();
     public WhisperConfig Whisper { get; set; } = new();
     public AiConfig Ai { get; set; } = new();
+
+    /// <summary>
+    /// config.json のルート直下に "Themes" が記述された場合でも受け取れるようにするフォールバック
+    /// </summary>
+    public List<MeetingTheme>? Themes
+    {
+        get => Box?.Themes;
+        set
+        {
+            if (value != null && value.Count > 0 && Box != null)
+            {
+                Box.Themes = value;
+            }
+        }
+    }
 }

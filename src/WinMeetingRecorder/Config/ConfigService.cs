@@ -31,14 +31,28 @@ public class ConfigService
     public string ConfigPath => _configFilePath;
 
     /// <summary>
-    /// exeと同階層に同梱された初期設定ファイル (config.json または config.default.json) を探索・読み込み
+    /// exeと同階層のディレクトリパスを取得 (単一exe実行時も確実にexe本体の配置フォルダを取得)
     /// </summary>
-    private AppConfig? LoadBundledConfig()
+    public static string GetExeDirectory()
     {
+        if (!string.IsNullOrEmpty(Environment.ProcessPath))
+        {
+            var pDir = Path.GetDirectoryName(Environment.ProcessPath);
+            if (!string.IsNullOrEmpty(pDir)) return pDir;
+        }
+        return AppContext.BaseDirectory;
+    }
+
+    /// <summary>
+    /// exeと同階層に配置されたローカル設定ファイル (config.json または config.default.json) を探索・読み込み
+    /// </summary>
+    public AppConfig? LoadBundledConfig()
+    {
+        var exeDir = GetExeDirectory();
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "config.json"),
-            Path.Combine(AppContext.BaseDirectory, "config.default.json")
+            Path.Combine(exeDir, "config.json"),
+            Path.Combine(exeDir, "config.default.json")
         };
 
         foreach (var path in candidates)
@@ -60,7 +74,7 @@ public class ConfigService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ConfigService] 同梱設定ファイルの読み込みスキップ ({path}): {ex.Message}");
+                    Console.WriteLine($"[ConfigService] ローカル設定ファイルの読み込みスキップ ({path}): {ex.Message}");
                 }
             }
         }
@@ -95,23 +109,24 @@ public class ConfigService
                 {
                     Console.WriteLine("[ConfigService] 📦 exeと同階層の初期設定ファイルからロードしました。");
                     config = bundled;
-                    try
-                    {
-                        SaveConfig(config);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[ConfigService] 初期設定の%AppData%への保存スキップ: {ex.Message}");
-                    }
                 }
                 else
                 {
                     config = new AppConfig();
                 }
+
+                try
+                {
+                    SaveConfig(config);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ConfigService] 初期設定の%AppData%への保存スキップ: {ex.Message}");
+                }
             }
             else
             {
-                // すでに %AppData% に存在する場合でも、Box 共通設定の未入力項目を同梱設定ファイルから補完
+                // すでに %AppData% に存在する場合でも、Box 共通設定およびローカルテーマ設定を同期
                 config.Screen ??= new ScreenConfig();
                 config.Box ??= new BoxConfig();
 
@@ -119,6 +134,13 @@ public class ConfigService
                 if (bundled != null)
                 {
                     var modified = false;
+
+                    // ★重要: テーマ定義 (Themes) はローカルの config.json (exeと同フォルダ) から常に最新を取得・同期
+                    if (bundled.Box?.Themes != null && bundled.Box.Themes.Count > 0)
+                    {
+                        config.Box.Themes = bundled.Box.Themes;
+                        modified = true;
+                    }
 
                     if (string.IsNullOrWhiteSpace(config.Box.ClientId) && !string.IsNullOrWhiteSpace(bundled.Box.ClientId))
                     {
@@ -147,11 +169,24 @@ public class ConfigService
                         try
                         {
                             SaveConfig(config);
-                            Console.WriteLine("[ConfigService] 🔄 同梱設定ファイルから未入力の共通設定を自動補完しました。");
+                            Console.WriteLine("[ConfigService] 🔄 exeと同階層の config.json から最新設定・テーマを自動同期しました。");
                         }
                         catch { }
                     }
                 }
+            }
+
+            // テーマが未設定の場合はデフォルト（社員限定、全体共有）を生成
+            if (config.Box.Themes == null || config.Box.Themes.Count == 0)
+            {
+                config.Box.Themes = BoxConfig.CreateDefaultThemes(config.Box.SharedFolderId);
+            }
+
+            // 選択中のテーマが無効または空の場合は、先頭のテーマを選択
+            if (string.IsNullOrEmpty(config.Box.SelectedThemeId) || !config.Box.Themes.Any(t => t.Id == config.Box.SelectedThemeId))
+            {
+                config.Box.SelectedThemeId = config.Box.Themes[0].Id;
+                config.Box.SelectedThemeName = config.Box.Themes[0].Name;
             }
 
             return config;

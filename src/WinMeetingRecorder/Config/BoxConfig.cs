@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using WinMeetingRecorder.Box;
 
 namespace WinMeetingRecorder.Config;
@@ -48,7 +49,7 @@ public class BoxConfig
     public string? UserLogin { get; set; }
 
     /// <summary>
-    /// themes.json が格納されている共通フォルダID (またはルートフォルダID)
+    /// 既定のBox親フォルダID (テーマ未指定時のフォールバック用)
     /// </summary>
     public string SharedFolderId { get; set; } = "433029580764";
 
@@ -61,17 +62,40 @@ public class BoxConfig
     /// <summary>
     /// 現在選択されている会議テーマID
     /// </summary>
-    public string SelectedThemeId { get; set; } = "";
+    public string SelectedThemeId { get; set; } = "employee_only";
 
     /// <summary>
     /// 現在選択されている会議テーマ表示名
     /// </summary>
-    public string SelectedThemeName { get; set; } = "";
+    public string SelectedThemeName { get; set; } = "社員限定";
 
     /// <summary>
-    /// themes.json から読み込んだテーマ台帳キャッシュ (オフライン時フォールバック用)
+    /// 定義されている会議テーマ一覧 (ローカルの config.json から取得)
     /// </summary>
-    public List<MeetingTheme> ThemesCache { get; set; } = new();
+    public List<MeetingTheme> Themes { get; set; } = CreateDefaultThemes();
+
+    /// <summary>
+    /// 旧バージョン互換用プロパティ (ThemesCache -> Themes)
+    /// </summary>
+    [JsonIgnore]
+    public List<MeetingTheme> ThemesCache
+    {
+        get => Themes;
+        set
+        {
+            if (value != null && value.Count > 0)
+                Themes = value;
+        }
+    }
+
+    public static List<MeetingTheme> CreateDefaultThemes(string defaultBoxId = "433029580764")
+    {
+        return new List<MeetingTheme>
+        {
+            new() { Id = "employee_only", Name = "社員限定", BoxFolderId = defaultBoxId },
+            new() { Id = "all_share", Name = "全体共有", BoxFolderId = defaultBoxId }
+        };
+    }
 
     /// <summary>
     /// 録音停止時にBoxへ自動アップロード＆スプール消去するか (デフォルト: true)

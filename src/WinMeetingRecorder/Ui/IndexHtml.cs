@@ -50,15 +50,15 @@ public static class IndexHtml
       <div>
         <div class="flex items-center justify-between mb-1">
           <label class="block text-xs font-semibold text-slate-300">📋 会議テーマ選択 (Box保存先フォルダ)</label>
-          <button id="refreshThemesBtn" title="Boxから最新のthemes.jsonを取得" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center space-x-1">
+          <button id="refreshThemesBtn" title="exeと同フォルダのconfig.jsonからテーマ設定を再読み込み" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center space-x-1">
             <span>🔄</span>
-            <span>テーマ更新</span>
+            <span>設定再読込</span>
           </button>
         </div>
         <select id="themeSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
           <option value="">テーマ読み込み中...</option>
         </select>
-        <p id="themeInfo" class="text-[10px] text-slate-500 mt-1">選択されたテーマのフォルダへ自動アップロードされます。</p>
+        <p id="themeInfo" class="text-[10px] text-slate-500 mt-1">選択されたテーマのBoxフォルダへ自動アップロードされます（exeと同フォルダのconfig.jsonで設定）。</p>
       </div>
     </div>
 
@@ -175,8 +175,9 @@ public static class IndexHtml
           </div>
         </div>
         <div>
-          <label class="block text-slate-400 mb-1">共通フォルダID (themes.json の格納先)</label>
+          <label class="block text-slate-400 mb-1">既定フォールバックBoxフォルダID (任意)</label>
           <input type="text" id="boxSharedFolderId" placeholder="例: 433029580764 (URL末尾の数字)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+          <p class="text-[10px] text-slate-500 mt-1">※ 会議テーマ（社員限定・全体共有など）ごとのBox IDは exeと同フォルダの <code>config.json</code> で設定・編集します。</p>
         </div>
         <div>
           <label class="block text-slate-400 mb-1">企業・独自ドメイン (任意・SSOログイン用)</label>
@@ -566,7 +567,8 @@ public static class IndexHtml
         themes.forEach(t => {
           const opt = document.createElement('option');
           opt.value = t.id;
-          opt.textContent = `${t.name} (フォルダ: ${t.box_folder_id})`;
+          const folderId = t.box_id || t.box_folder_id || '(未設定)';
+          opt.textContent = `${t.name} (Box ID: ${folderId})`;
           if (t.id === activeId) opt.selected = true;
           themeSelect.appendChild(opt);
         });
@@ -592,10 +594,10 @@ public static class IndexHtml
 
     refreshThemesBtn.addEventListener('click', async () => {
       refreshThemesBtn.disabled = true;
-      refreshThemesBtn.innerHTML = '<span>🔄</span><span>取得中...</span>';
+      refreshThemesBtn.innerHTML = '<span>🔄</span><span>読込中...</span>';
       await loadThemes(true);
       refreshThemesBtn.disabled = false;
-      refreshThemesBtn.innerHTML = '<span>🔄</span><span>テーマ更新</span>';
+      refreshThemesBtn.innerHTML = '<span>🔄</span><span>設定再読込</span>';
     });
 
     // Box ログインボタン (Quick & Settings)

@@ -23,7 +23,7 @@ public record BoxAuthStatus(
     int ThemeCount);
 
 /// <summary>
-/// Box API (OAuth 2.0 ユーザー認証, themes.json 動的取得, Chunked アップロード, セッション一括保存) サービス
+/// Box API (OAuth 2.0 ユーザー認証, Chunked アップロード, セッション一括保存) サービス
 /// </summary>
 public class BoxService
 {
@@ -113,7 +113,7 @@ public class BoxService
             config.TokenExpiresAt,
             config.SelectedThemeId,
             config.SelectedThemeName,
-            config.ThemesCache.Count);
+            config.Themes.Count);
     }
 
     /// <summary>
@@ -386,96 +386,37 @@ public class BoxService
     }
 
     /// <summary>
-    /// テーマ台帳 (themes.json) の動的取得
-    /// Box共通フォルダ配下の themes.json を取得し、失敗時はキャッシュへフォールバック
+    /// テーマ台帳の取得
+    /// ローカルの config.json (exeと同フォルダ) から取得
     /// </summary>
-    public async Task<List<MeetingTheme>> GetThemesAsync(bool forceRefresh = false)
+    public Task<List<MeetingTheme>> GetThemesAsync(bool forceRefresh = false)
     {
         var appConfig = _configService.LoadConfig();
         var boxConfig = appConfig.Box;
 
-        if (!forceRefresh && boxConfig.ThemesCache.Count > 0)
+        var themes = boxConfig.Themes;
+        if (themes == null || themes.Count == 0)
         {
-            return boxConfig.ThemesCache;
+            themes = BoxConfig.CreateDefaultThemes(boxConfig.SharedFolderId);
+            boxConfig.Themes = themes;
+            _configService.SaveConfig(appConfig);
         }
 
-        try
+        if (string.IsNullOrEmpty(boxConfig.SelectedThemeId) || !themes.Any(t => t.Id == boxConfig.SelectedThemeId))
         {
-            var token = await GetValidAccessTokenAsync();
-            var sharedFolderId = string.IsNullOrWhiteSpace(boxConfig.SharedFolderId) ? "0" : boxConfig.SharedFolderId;
-
-            // 1. フォルダ内のアイテムから themes.json を探す
-            using var reqItems = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{sharedFolderId}/items?fields=id,name,type");
-            reqItems.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            var resItems = await Http.SendAsync(reqItems);
-            if (resItems.IsSuccessStatusCode)
-            {
-                var jsonItems = await resItems.Content.ReadAsStringAsync();
-                using var docItems = JsonDocument.Parse(jsonItems);
-                var entries = docItems.RootElement.GetProperty("entries");
-
-                string? themesFileId = null;
-                foreach (var entry in entries.EnumerateArray())
-                {
-                    if (entry.GetProperty("type").GetString() == "file" &&
-                        string.Equals(entry.GetProperty("name").GetString(), "themes.json", StringComparison.OrdinalIgnoreCase))
-                    {
-                        themesFileId = entry.GetProperty("id").GetString();
-                        break;
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(themesFileId))
-                {
-                    // 2. themes.json の内容をダウンロード
-                    using var reqContent = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/files/{themesFileId}/content");
-                    reqContent.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-                    var resContent = await Http.SendAsync(reqContent);
-                    if (resContent.IsSuccessStatusCode)
-                    {
-                        var contentJson = await resContent.Content.ReadAsStringAsync();
-                        var themes = JsonSerializer.Deserialize<List<MeetingTheme>>(contentJson, JsonOptions);
-
-                        if (themes != null && themes.Count > 0)
-                        {
-                            boxConfig.ThemesCache = themes;
-                            if (string.IsNullOrEmpty(boxConfig.SelectedThemeId) || !themes.Any(t => t.Id == boxConfig.SelectedThemeId))
-                            {
-                                boxConfig.SelectedThemeId = themes[0].Id;
-                                boxConfig.SelectedThemeName = themes[0].Name;
-                            }
-                            _configService.SaveConfig(appConfig);
-                            ThemesUpdated?.Invoke(themes);
-                            Console.WriteLine($"[BoxService] 📋 themes.json をBoxから取得・更新しました ({themes.Count}件)");
-                            return themes;
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[BoxService] ⚠️ themes.json 取得エラー (キャッシュまたは初期値へフォールバック): {ex.Message}");
+            boxConfig.SelectedThemeId = themes[0].Id;
+            boxConfig.SelectedThemeName = themes[0].Name;
+            _configService.SaveConfig(appConfig);
         }
 
-        // キャッシュがあればそれを返す
-        if (boxConfig.ThemesCache.Count > 0)
+        if (forceRefresh)
         {
-            return boxConfig.ThemesCache;
+            ThemesUpdated?.Invoke(themes);
+            AuthStatusChanged?.Invoke(GetAuthStatus());
+            Console.WriteLine($"[BoxService] 📋 テーマ設定をローカルの config.json から再読み込みしました ({themes.Count}件)");
         }
 
-        // デフォルトフォールバック
-        var defaultThemes = new List<MeetingTheme>
-        {
-            new() { Id = "default", Name = "標準会議", BoxFolderId = boxConfig.SharedFolderId }
-        };
-        boxConfig.ThemesCache = defaultThemes;
-        boxConfig.SelectedThemeId = defaultThemes[0].Id;
-        boxConfig.SelectedThemeName = defaultThemes[0].Name;
-        _configService.SaveConfig(appConfig);
-        return defaultThemes;
+        return Task.FromResult(themes);
     }
 
     /// <summary>
@@ -484,7 +425,7 @@ public class BoxService
     public void SelectTheme(string themeId)
     {
         var appConfig = _configService.LoadConfig();
-        var theme = appConfig.Box.ThemesCache.FirstOrDefault(t => t.Id == themeId);
+        var theme = appConfig.Box.Themes.FirstOrDefault(t => t.Id == themeId);
         if (theme != null)
         {
             appConfig.Box.SelectedThemeId = theme.Id;

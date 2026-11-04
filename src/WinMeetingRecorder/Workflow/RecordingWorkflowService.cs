@@ -338,7 +338,7 @@ public class RecordingWorkflowService
 
                 UpdateProgress("recording", "記録中", 0);
 
-                var themeName = _configService.LoadConfig().Box.ThemesCache.FirstOrDefault(t => t.Id == _selectedThemeId)?.Name ?? _selectedThemeId ?? "既定";
+                var themeName = _configService.LoadConfig().Box.Themes.FirstOrDefault(t => t.Id == _selectedThemeId)?.Name ?? _selectedThemeId ?? "既定";
                 AppLogger.Info($"🎙️ 会議記録を開始しました (テーマ: {themeName} / セッション: {session.SessionId})");
                 RecordingStarted?.Invoke(session.SessionId);
 
