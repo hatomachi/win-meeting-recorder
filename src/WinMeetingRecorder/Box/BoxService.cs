@@ -89,6 +89,7 @@ public class BoxService
 
     private readonly ConfigService _configService;
     private readonly object _lock = new();
+    private readonly SemaphoreSlim _tokenLock = new(1, 1);
 
     public event Action<BoxAuthStatus>? AuthStatusChanged;
     public event Action<List<MeetingTheme>>? ThemesUpdated;
@@ -286,10 +287,34 @@ public class BoxService
         Console.WriteLine("[BoxService] 🔑 OAuth2 トークン取得に成功しました。");
     }
 
+    private class BoxUnauthorizedException : Exception
+    {
+        public BoxUnauthorizedException(string message) : base(message) { }
+    }
+
+    /// <summary>
+    /// トークンを取得してアクションを実行し、401 Unauthorized 発生時はトークンを強制リフレッシュして1回だけ自動リトライする
+    /// </summary>
+    private async Task<T> ExecuteWithTokenRetryAsync<T>(Func<string, Task<T>> action)
+    {
+        var token = await GetValidAccessTokenAsync();
+        try
+        {
+            return await action(token);
+        }
+        catch (BoxUnauthorizedException ex)
+        {
+            AppLogger.Warn($"[BoxService] ⚠️ 401 Unauthorized を検知しました。トークンを強制リフレッシュして1回リトライします: {ex.Message}");
+            token = await GetValidAccessTokenAsync(forceRefresh: true);
+            return await action(token);
+        }
+    }
+
     /// <summary>
     /// 有効な Access Token を取得（必要に応じて自動リフレッシュ）
+    /// forceRefresh = true の場合は有効期限にかかわらず強制リフレッシュを実行する
     /// </summary>
-    public async Task<string> GetValidAccessTokenAsync()
+    public async Task<string> GetValidAccessTokenAsync(bool forceRefresh = false)
     {
         var appConfig = _configService.LoadConfig();
         var boxConfig = appConfig.Box;
@@ -300,51 +325,76 @@ public class BoxService
             return boxConfig.DeveloperToken;
         }
 
-        // 2. 有効期限内の Access Token があればそれを返す
-        if (!string.IsNullOrWhiteSpace(boxConfig.AccessToken) &&
-            boxConfig.TokenExpiresAt.HasValue &&
-            boxConfig.TokenExpiresAt.Value > DateTime.UtcNow)
+        // 2. 強制更新でなく、安全マージン(2分)以上の有効な Access Token があればそれを返す
+        if (!forceRefresh && boxConfig.IsAccessTokenValid)
         {
-            return boxConfig.AccessToken;
+            return boxConfig.AccessToken!;
         }
 
-        // 3. Refresh Token による自動更新
-        if (!string.IsNullOrWhiteSpace(boxConfig.RefreshToken) && boxConfig.HasCredentials)
+        // 3. Refresh Token による自動更新（SemaphoreSlim による排他制御 & ダブルチェック）
+        if (boxConfig.CanRefreshToken)
         {
-            Console.WriteLine("[BoxService] 🔄 Access Token の有効期限が切れているため、自動リフレッシュを実行します...");
-            var parameters = new Dictionary<string, string>
+            await _tokenLock.WaitAsync();
+            try
             {
-                { "grant_type", "refresh_token" },
-                { "refresh_token", boxConfig.RefreshToken },
-                { "client_id", boxConfig.ClientId },
-                { "client_secret", boxConfig.ClientSecret }
-            };
+                // ロック待機中に別スレッドがリフレッシュを完了していないか再確認
+                appConfig = _configService.LoadConfig();
+                boxConfig = appConfig.Box;
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.box.com/oauth2/token")
-            {
-                Content = new FormUrlEncodedContent(parameters)
-            };
+                if (!forceRefresh && boxConfig.IsAccessTokenValid)
+                {
+                    return boxConfig.AccessToken!;
+                }
 
-            var response = await Http.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
+                if (!boxConfig.CanRefreshToken)
+                {
+                    throw new InvalidOperationException("Box Refresh Token またはクライアント設定が失われました。再ログインしてください。");
+                }
 
-            if (response.IsSuccessStatusCode)
-            {
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
+                AppLogger.Info("[BoxService] 🔄 Access Token の有効期限が切れている（または残り2分未満）ため、自動リフレッシュを実行します...");
 
-                boxConfig.AccessToken = root.GetProperty("access_token").GetString();
-                boxConfig.RefreshToken = root.GetProperty("refresh_token").GetString();
-                var expiresIn = root.GetProperty("expires_in").GetInt32();
-                boxConfig.TokenExpiresAt = DateTime.UtcNow.AddSeconds(expiresIn - 60);
+                var parameters = new Dictionary<string, string>
+                {
+                    { "grant_type", "refresh_token" },
+                    { "refresh_token", boxConfig.RefreshToken! },
+                    { "client_id", boxConfig.ClientId },
+                    { "client_secret", boxConfig.ClientSecret }
+                };
 
-                _configService.SaveConfig(appConfig);
-                Console.WriteLine("[BoxService] ✅ トークンの自動リフレッシュに成功しました。");
-                return boxConfig.AccessToken!;
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.box.com/oauth2/token")
+                {
+                    Content = new FormUrlEncodedContent(parameters)
+                };
+
+                var response = await Http.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    boxConfig.AccessToken = root.GetProperty("access_token").GetString();
+                    boxConfig.RefreshToken = root.GetProperty("refresh_token").GetString();
+                    var expiresIn = root.GetProperty("expires_in").GetInt32();
+                    boxConfig.TokenExpiresAt = DateTime.UtcNow.AddSeconds(expiresIn - 60);
+
+                    _configService.SaveConfig(appConfig);
+                    AppLogger.Info($"[BoxService] ✅ トークンの自動リフレッシュに成功しました (次回失効予定: {boxConfig.TokenExpiresAt:yyyy-MM-dd HH:mm:ss} UTC)");
+
+                    AuthStatusChanged?.Invoke(GetAuthStatus());
+                    return boxConfig.AccessToken!;
+                }
+                else
+                {
+                    var errMsg = $"[BoxService] ⚠️ トークンの自動リフレッシュに失敗しました: {response.StatusCode} - {json}";
+                    AppLogger.Error(errMsg);
+                    throw new InvalidOperationException($"Box トークンの自動更新に失敗しました ({response.StatusCode})。Web UI から再ログインを行ってください。");
+                }
             }
-            else
+            finally
             {
-                Console.WriteLine($"[BoxService] ⚠️ トークンの自動リフレッシュに失敗しました: {json}");
+                _tokenLock.Release();
             }
         }
 
@@ -361,28 +411,35 @@ public class BoxService
     /// </summary>
     public async Task<string> RefreshUserInfoAsync()
     {
-        var token = await GetValidAccessTokenAsync();
-        using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.box.com/2.0/users/me");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var res = await Http.SendAsync(req);
-        var json = await res.Content.ReadAsStringAsync();
-
-        if (!res.IsSuccessStatusCode)
+        return await ExecuteWithTokenRetryAsync(async token =>
         {
-            throw new InvalidOperationException($"ユーザー情報の取得に失敗: {json}");
-        }
+            using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.box.com/2.0/users/me");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var doc = JsonDocument.Parse(json);
-        var name = doc.RootElement.GetProperty("name").GetString() ?? "";
-        var login = doc.RootElement.GetProperty("login").GetString() ?? "";
+            var res = await Http.SendAsync(req);
+            var json = await res.Content.ReadAsStringAsync();
 
-        var appConfig = _configService.LoadConfig();
-        appConfig.Box.UserName = name;
-        appConfig.Box.UserLogin = login;
-        _configService.SaveConfig(appConfig);
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                throw new BoxUnauthorizedException($"ユーザー情報取得認証エラー (401 Unauthorized): {json}");
+            }
 
-        return $"{name} ({login})";
+            if (!res.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"ユーザー情報の取得に失敗: {json}");
+            }
+
+            using var doc = JsonDocument.Parse(json);
+            var name = doc.RootElement.GetProperty("name").GetString() ?? "";
+            var login = doc.RootElement.GetProperty("login").GetString() ?? "";
+
+            var appConfig = _configService.LoadConfig();
+            appConfig.Box.UserName = name;
+            appConfig.Box.UserLogin = login;
+            _configService.SaveConfig(appConfig);
+
+            return $"{name} ({login})";
+        });
     }
 
     /// <summary>
@@ -442,43 +499,49 @@ public class BoxService
     /// </summary>
     public async Task<string> CreateSessionFolderAsync(string parentFolderId, string folderName)
     {
-        var token = await GetValidAccessTokenAsync();
-
-        var bodyObj = new
+        return await ExecuteWithTokenRetryAsync(async token =>
         {
-            name = folderName,
-            parent = new { id = parentFolderId }
-        };
-
-        var jsonBody = JsonSerializer.Serialize(bodyObj);
-        using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.box.com/2.0/folders")
-        {
-            Content = new StringContent(jsonBody, Encoding.UTF8, "application/json")
-        };
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var res = await Http.SendAsync(req);
-        var jsonRes = await res.Content.ReadAsStringAsync();
-
-        if (res.StatusCode == HttpStatusCode.Created)
-        {
-            using var doc = JsonDocument.Parse(jsonRes);
-            return doc.RootElement.GetProperty("id").GetString()!;
-        }
-
-        // 既に同名フォルダが存在する場合 (409 Conflict)
-        if (res.StatusCode == HttpStatusCode.Conflict)
-        {
-            using var doc = JsonDocument.Parse(jsonRes);
-            if (doc.RootElement.TryGetProperty("context_info", out var ctx) &&
-                ctx.TryGetProperty("conflicts", out var conflicts) &&
-                conflicts.GetArrayLength() > 0)
+            var bodyObj = new
             {
-                return conflicts[0].GetProperty("id").GetString()!;
-            }
-        }
+                name = folderName,
+                parent = new { id = parentFolderId }
+            };
 
-        throw new InvalidOperationException($"フォルダ作成に失敗しました: {res.StatusCode} - {jsonRes}");
+            var jsonBody = JsonSerializer.Serialize(bodyObj);
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.box.com/2.0/folders")
+            {
+                Content = new StringContent(jsonBody, Encoding.UTF8, "application/json")
+            };
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var res = await Http.SendAsync(req);
+            var jsonRes = await res.Content.ReadAsStringAsync();
+
+            if (res.StatusCode == HttpStatusCode.Created)
+            {
+                using var doc = JsonDocument.Parse(jsonRes);
+                return doc.RootElement.GetProperty("id").GetString()!;
+            }
+
+            // 既に同名フォルダが存在する場合 (409 Conflict)
+            if (res.StatusCode == HttpStatusCode.Conflict)
+            {
+                using var doc = JsonDocument.Parse(jsonRes);
+                if (doc.RootElement.TryGetProperty("context_info", out var ctx) &&
+                    ctx.TryGetProperty("conflicts", out var conflicts) &&
+                    conflicts.GetArrayLength() > 0)
+                {
+                    return conflicts[0].GetProperty("id").GetString()!;
+                }
+            }
+
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                throw new BoxUnauthorizedException($"フォルダ作成認証エラー (401 Unauthorized): {jsonRes}");
+            }
+
+            throw new InvalidOperationException($"フォルダ作成に失敗しました: {res.StatusCode} - {jsonRes}");
+        });
     }
 
     /// <summary>
@@ -511,41 +574,47 @@ public class BoxService
     /// </summary>
     private async Task<string> UploadFileStandardAsync(string folderId, string filePath, string fileName)
     {
-        var token = await GetValidAccessTokenAsync();
-
-        using var form = new MultipartFormDataContent();
-        var attrJson = JsonSerializer.Serialize(new
+        return await ExecuteWithTokenRetryAsync(async token =>
         {
-            name = fileName,
-            parent = new { id = folderId }
-        });
-
-        form.Add(new StringContent(attrJson, Encoding.UTF8, "application/json"), "attributes");
-
-        using var fileStream = File.OpenRead(filePath);
-        using var streamContent = new StreamContent(fileStream);
-        form.Add(streamContent, "file", fileName);
-
-        using var req = new HttpRequestMessage(HttpMethod.Post, "https://upload.box.com/api/2.0/files/content")
-        {
-            Content = form
-        };
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var res = await Http.SendAsync(req);
-        var jsonRes = await res.Content.ReadAsStringAsync();
-
-        if (res.IsSuccessStatusCode)
-        {
-            using var doc = JsonDocument.Parse(jsonRes);
-            var entries = doc.RootElement.GetProperty("entries");
-            if (entries.GetArrayLength() > 0)
+            using var form = new MultipartFormDataContent();
+            var attrJson = JsonSerializer.Serialize(new
             {
-                return entries[0].GetProperty("id").GetString()!;
-            }
-        }
+                name = fileName,
+                parent = new { id = folderId }
+            });
 
-        throw new InvalidOperationException($"通常アップロード失敗: {res.StatusCode} - {jsonRes}");
+            form.Add(new StringContent(attrJson, Encoding.UTF8, "application/json"), "attributes");
+
+            using var fileStream = File.OpenRead(filePath);
+            using var streamContent = new StreamContent(fileStream);
+            form.Add(streamContent, "file", fileName);
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://upload.box.com/api/2.0/files/content")
+            {
+                Content = form
+            };
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var res = await Http.SendAsync(req);
+            var jsonRes = await res.Content.ReadAsStringAsync();
+
+            if (res.IsSuccessStatusCode)
+            {
+                using var doc = JsonDocument.Parse(jsonRes);
+                var entries = doc.RootElement.GetProperty("entries");
+                if (entries.GetArrayLength() > 0)
+                {
+                    return entries[0].GetProperty("id").GetString()!;
+                }
+            }
+
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                throw new BoxUnauthorizedException($"通常アップロード認証エラー (401 Unauthorized): {jsonRes}");
+            }
+
+            throw new InvalidOperationException($"通常アップロード失敗: {res.StatusCode} - {jsonRes}");
+        });
     }
 
     /// <summary>
@@ -553,124 +622,131 @@ public class BoxService
     /// </summary>
     private async Task<string> UploadLargeFileChunkedAsync(string folderId, string filePath, string fileName, IProgress<long>? progress)
     {
-        var token = await GetValidAccessTokenAsync();
-        var fileInfo = new FileInfo(filePath);
-        var totalBytes = fileInfo.Length;
-
-        // 1. セッション作成 (POST /files/upload_sessions)
-        var createSessionBody = JsonSerializer.Serialize(new
+        return await ExecuteWithTokenRetryAsync(async token =>
         {
-            folder_id = folderId,
-            file_size = totalBytes,
-            file_name = fileName
-        });
+            var fileInfo = new FileInfo(filePath);
+            var totalBytes = fileInfo.Length;
 
-        using var createReq = new HttpRequestMessage(HttpMethod.Post, "https://upload.box.com/api/2.0/files/upload_sessions")
-        {
-            Content = new StringContent(createSessionBody, Encoding.UTF8, "application/json")
-        };
-        createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var createRes = await Http.SendAsync(createReq);
-        var createJson = await createRes.Content.ReadAsStringAsync();
-
-        if (!createRes.IsSuccessStatusCode)
-        {
-            throw new InvalidOperationException($"Chunked Upload セッション作成失敗: {createRes.StatusCode} - {createJson}");
-        }
-
-        using var sessionDoc = JsonDocument.Parse(createJson);
-        var sessionRoot = sessionDoc.RootElement;
-        var partSize = sessionRoot.GetProperty("part_size").GetInt64();
-        var totalParts = sessionRoot.GetProperty("total_parts").GetInt32();
-        var endpoints = sessionRoot.GetProperty("session_endpoints");
-        var uploadPartUrl = endpoints.GetProperty("upload_part").GetString()!;
-        var commitUrl = endpoints.GetProperty("commit").GetString()!;
-
-        // 2. パート分割アップロード
-        var committedParts = new List<object>();
-        using var fileStream = File.OpenRead(filePath);
-        byte[] buffer = new byte[partSize];
-        long offset = 0;
-
-        using var sha1Full = SHA1.Create();
-
-        for (int i = 0; i < totalParts; i++)
-        {
-            int bytesRead = await fileStream.ReadAsync(buffer, 0, (int)Math.Min(partSize, totalBytes - offset));
-            if (bytesRead <= 0) break;
-
-            long rangeStart = offset;
-            long rangeEnd = offset + bytesRead - 1;
-
-            // パート用 SHA-1 ハッシュ
-            using var sha1Part = SHA1.Create();
-            var partHash = sha1Part.ComputeHash(buffer, 0, bytesRead);
-            var partShaBase64 = Convert.ToBase64String(partHash);
-
-            // 全体ハッシュの途中計算
-            sha1Full.TransformBlock(buffer, 0, bytesRead, null, 0);
-
-            using var partContent = new ByteArrayContent(buffer, 0, bytesRead);
-            partContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            partContent.Headers.Add("Digest", $"sha={partShaBase64}");
-            partContent.Headers.Add("Content-Range", $"bytes {rangeStart}-{rangeEnd}/{totalBytes}");
-
-            using var partReq = new HttpRequestMessage(HttpMethod.Put, uploadPartUrl)
+            // 1. セッション作成 (POST /files/upload_sessions)
+            var createSessionBody = JsonSerializer.Serialize(new
             {
-                Content = partContent
-            };
-            partReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            var partRes = await Http.SendAsync(partReq);
-            var partJson = await partRes.Content.ReadAsStringAsync();
-
-            if (!partRes.IsSuccessStatusCode)
-            {
-                throw new InvalidOperationException($"パート {i + 1}/{totalParts} アップロード失敗: {partRes.StatusCode} - {partJson}");
-            }
-
-            using var partDoc = JsonDocument.Parse(partJson);
-            var partObj = partDoc.RootElement.GetProperty("part");
-            committedParts.Add(new
-            {
-                part_id = partObj.GetProperty("part_id").GetString(),
-                offset = partObj.GetProperty("offset").GetInt64(),
-                size = partObj.GetProperty("size").GetInt64(),
-                sha1 = partObj.GetProperty("sha1").GetString()
+                folder_id = folderId,
+                file_size = totalBytes,
+                file_name = fileName
             });
 
-            offset += bytesRead;
-            progress?.Report(offset);
-            Console.WriteLine($"[BoxService] ⬆️ Chunked アップロード中: {offset * 100 / totalBytes}% ({i + 1}/{totalParts})");
-        }
-
-        sha1Full.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-        var fullShaBase64 = Convert.ToBase64String(sha1Full.Hash!);
-
-        // 3. セッションのコミット (POST /files/upload_sessions/{id}/commit)
-        var commitBody = JsonSerializer.Serialize(new { parts = committedParts });
-        using var commitReq = new HttpRequestMessage(HttpMethod.Post, commitUrl)
-        {
-            Content = new StringContent(commitBody, Encoding.UTF8, "application/json")
-        };
-        commitReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        commitReq.Headers.Add("Digest", $"sha={fullShaBase64}");
-
-        var commitRes = await Http.SendAsync(commitReq);
-        var commitJson = await commitRes.Content.ReadAsStringAsync();
-
-        if (commitRes.StatusCode == HttpStatusCode.Created || commitRes.StatusCode == HttpStatusCode.Accepted)
-        {
-            using var commitDoc = JsonDocument.Parse(commitJson);
-            var entries = commitDoc.RootElement.GetProperty("entries");
-            if (entries.GetArrayLength() > 0)
+            using var createReq = new HttpRequestMessage(HttpMethod.Post, "https://upload.box.com/api/2.0/files/upload_sessions")
             {
-                return entries[0].GetProperty("id").GetString()!;
-            }
-        }
+                Content = new StringContent(createSessionBody, Encoding.UTF8, "application/json")
+            };
+            createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        throw new InvalidOperationException($"Chunked Upload コミット失敗: {commitRes.StatusCode} - {commitJson}");
+            var createRes = await Http.SendAsync(createReq);
+            var createJson = await createRes.Content.ReadAsStringAsync();
+
+            if (createRes.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                throw new BoxUnauthorizedException($"Chunked Upload セッション作成時の認証エラー (401 Unauthorized): {createJson}");
+            }
+
+            if (!createRes.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Chunked Upload セッション作成失敗: {createRes.StatusCode} - {createJson}");
+            }
+
+            using var sessionDoc = JsonDocument.Parse(createJson);
+            var sessionRoot = sessionDoc.RootElement;
+            var partSize = sessionRoot.GetProperty("part_size").GetInt64();
+            var totalParts = sessionRoot.GetProperty("total_parts").GetInt32();
+            var endpoints = sessionRoot.GetProperty("session_endpoints");
+            var uploadPartUrl = endpoints.GetProperty("upload_part").GetString()!;
+            var commitUrl = endpoints.GetProperty("commit").GetString()!;
+
+            // 2. パート分割アップロード
+            var committedParts = new List<object>();
+            using var fileStream = File.OpenRead(filePath);
+            byte[] buffer = new byte[partSize];
+            long offset = 0;
+
+            using var sha1Full = SHA1.Create();
+
+            for (int i = 0; i < totalParts; i++)
+            {
+                int bytesRead = await fileStream.ReadAsync(buffer, 0, (int)Math.Min(partSize, totalBytes - offset));
+                if (bytesRead <= 0) break;
+
+                long rangeStart = offset;
+                long rangeEnd = offset + bytesRead - 1;
+
+                // パート用 SHA-1 ハッシュ
+                using var sha1Part = SHA1.Create();
+                var partHash = sha1Part.ComputeHash(buffer, 0, bytesRead);
+                var partShaBase64 = Convert.ToBase64String(partHash);
+
+                // 全体ハッシュの途中計算
+                sha1Full.TransformBlock(buffer, 0, bytesRead, null, 0);
+
+                using var partContent = new ByteArrayContent(buffer, 0, bytesRead);
+                partContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                partContent.Headers.Add("Digest", $"sha={partShaBase64}");
+                partContent.Headers.Add("Content-Range", $"bytes {rangeStart}-{rangeEnd}/{totalBytes}");
+
+                using var partReq = new HttpRequestMessage(HttpMethod.Put, uploadPartUrl)
+                {
+                    Content = partContent
+                };
+                partReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                var partRes = await Http.SendAsync(partReq);
+                var partJson = await partRes.Content.ReadAsStringAsync();
+
+                if (!partRes.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException($"パート {i + 1}/{totalParts} アップロード失敗: {partRes.StatusCode} - {partJson}");
+                }
+
+                using var partDoc = JsonDocument.Parse(partJson);
+                var partObj = partDoc.RootElement.GetProperty("part");
+                committedParts.Add(new
+                {
+                    part_id = partObj.GetProperty("part_id").GetString(),
+                    offset = partObj.GetProperty("offset").GetInt64(),
+                    size = partObj.GetProperty("size").GetInt64(),
+                    sha1 = partObj.GetProperty("sha1").GetString()
+                });
+
+                offset += bytesRead;
+                progress?.Report(offset);
+                Console.WriteLine($"[BoxService] ⬆️ Chunked アップロード中: {offset * 100 / totalBytes}% ({i + 1}/{totalParts})");
+            }
+
+            sha1Full.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+            var fullShaBase64 = Convert.ToBase64String(sha1Full.Hash!);
+
+            // 3. セッションのコミット (POST /files/upload_sessions/{id}/commit)
+            var commitBody = JsonSerializer.Serialize(new { parts = committedParts });
+            using var commitReq = new HttpRequestMessage(HttpMethod.Post, commitUrl)
+            {
+                Content = new StringContent(commitBody, Encoding.UTF8, "application/json")
+            };
+            commitReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            commitReq.Headers.Add("Digest", $"sha={fullShaBase64}");
+
+            var commitRes = await Http.SendAsync(commitReq);
+            var commitJson = await commitRes.Content.ReadAsStringAsync();
+
+            if (commitRes.StatusCode == HttpStatusCode.Created || commitRes.StatusCode == HttpStatusCode.Accepted)
+            {
+                using var commitDoc = JsonDocument.Parse(commitJson);
+                var entries = commitDoc.RootElement.GetProperty("entries");
+                if (entries.GetArrayLength() > 0)
+                {
+                    return entries[0].GetProperty("id").GetString()!;
+                }
+            }
+
+            throw new InvalidOperationException($"Chunked Upload コミット失敗: {commitRes.StatusCode} - {commitJson}");
+        });
     }
 
     /// <summary>
@@ -701,6 +777,17 @@ public class BoxService
         {
             AppLogger.Error("Boxアップロード失敗: アップロード先となる会議テーマ（BoxフォルダID）が未設定です。");
             return new BoxUploadResult(false, "アップロード先となる会議テーマ（BoxフォルダID）が未設定です。");
+        }
+
+        // 0. トークンの事前検証・自動リフレッシュ（60分経過後の期限切れトークンを事前に新調）
+        try
+        {
+            await GetValidAccessTokenAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"Boxアップロード失敗: 認証トークンの準備に失敗しました (再ログインが必要です): {ex.Message}");
+            return new BoxUploadResult(false, $"Box 認証トークンの準備に失敗しました: {ex.Message}");
         }
 
         AppLogger.Info($"🚀 Boxへの一括アップロードを開始します (テーマ: {theme.Name}, 親フォルダ: {theme.BoxFolderId})");
@@ -822,60 +909,69 @@ public class BoxService
     /// </summary>
     private async Task VerifyFolderFilesAsync(string boxFolderId, List<string> expectedFileNames)
     {
-        var token = await GetValidAccessTokenAsync();
-        using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{boxFolderId}/items?fields=id,name,type,size&limit=1000");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var res = await Http.SendAsync(req);
-        var jsonRes = await res.Content.ReadAsStringAsync();
-
-        if (!res.IsSuccessStatusCode)
+        await ExecuteWithTokenRetryAsync(async token =>
         {
-            throw new InvalidOperationException($"Box上のファイル実在確認APIに失敗しました: {res.StatusCode} - {jsonRes}");
-        }
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{boxFolderId}/items?fields=id,name,type,size&limit=1000");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var doc = JsonDocument.Parse(jsonRes);
-        var entries = doc.RootElement.GetProperty("entries");
+            var res = await Http.SendAsync(req);
+            var jsonRes = await res.Content.ReadAsStringAsync();
 
-        var boxFiles = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in entries.EnumerateArray())
-        {
-            if (entry.GetProperty("type").GetString() == "file")
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
             {
-                var name = entry.GetProperty("name").GetString()!;
-                var size = entry.TryGetProperty("size", out var s) ? s.GetInt64() : 0;
-                boxFiles[name] = size;
+                throw new BoxUnauthorizedException($"Boxファイル実在確認APIの認証エラー (401 Unauthorized): {jsonRes}");
             }
-        }
 
-        var missingFiles = new List<string>();
-        var zeroByteFiles = new List<string>();
+            if (!res.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Box上のファイル実在確認APIに失敗しました: {res.StatusCode} - {jsonRes}");
+            }
 
-        foreach (var expected in expectedFileNames)
-        {
-            if (!boxFiles.TryGetValue(expected, out var size))
-            {
-                missingFiles.Add(expected);
-            }
-            else if (size <= 0)
-            {
-                zeroByteFiles.Add(expected);
-            }
-        }
+            using var doc = JsonDocument.Parse(jsonRes);
+            var entries = doc.RootElement.GetProperty("entries");
 
-        if (missingFiles.Count > 0 || zeroByteFiles.Count > 0)
-        {
-            var msg = new StringBuilder("Box上のファイル検証に失敗しました:");
-            if (missingFiles.Count > 0)
+            var boxFiles = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in entries.EnumerateArray())
             {
-                msg.Append($" [未検出: {string.Join(", ", missingFiles)}]");
+                if (entry.GetProperty("type").GetString() == "file")
+                {
+                    var name = entry.GetProperty("name").GetString()!;
+                    var size = entry.TryGetProperty("size", out var s) ? s.GetInt64() : 0;
+                    boxFiles[name] = size;
+                }
             }
-            if (zeroByteFiles.Count > 0)
+
+            var missingFiles = new List<string>();
+            var zeroByteFiles = new List<string>();
+
+            foreach (var expected in expectedFileNames)
             {
-                msg.Append($" [0バイト不正: {string.Join(", ", zeroByteFiles)}]");
+                if (!boxFiles.TryGetValue(expected, out var size))
+                {
+                    missingFiles.Add(expected);
+                }
+                else if (size <= 0)
+                {
+                    zeroByteFiles.Add(expected);
+                }
             }
-            throw new InvalidOperationException(msg.ToString());
-        }
+
+            if (missingFiles.Count > 0 || zeroByteFiles.Count > 0)
+            {
+                var msg = new StringBuilder("Box上のファイル検証に失敗しました:");
+                if (missingFiles.Count > 0)
+                {
+                    msg.Append($" [未検出: {string.Join(", ", missingFiles)}]");
+                }
+                if (zeroByteFiles.Count > 0)
+                {
+                    msg.Append($" [0バイト不正: {string.Join(", ", zeroByteFiles)}]");
+                }
+                throw new InvalidOperationException(msg.ToString());
+            }
+
+            return true;
+        });
     }
 
     /// <summary>

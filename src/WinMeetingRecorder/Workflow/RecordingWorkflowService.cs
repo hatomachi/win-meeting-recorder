@@ -634,17 +634,21 @@ public class RecordingWorkflowService
                     metadata.Pipeline.Upload = "error";
                     metadata.Pipeline.ErrorMessage = boxResult.Message;
                     _spoolService.UpdateMetadata(metadata);
-                    UpdateProgress("error", $"⚠️ Boxアップロードエラー: {boxResult.Message}", 0);
+                    UpdateProgress("error", $"⚠️ Boxアップロードエラー: {boxResult.Message} (スプールに安全保持)", 0);
                     PipelineFailed?.Invoke("upload", boxResult.Message);
+                    AppLogger.Warn($"⚠️ Boxアップロードに失敗したため、会議記録はローカルスプールに安全保持されました (セッション: {stoppingSessionId})");
                 }
             }
             else if (metadata != null)
             {
                 metadata.Pipeline.Upload = "skipped";
                 _spoolService.UpdateMetadata(metadata);
-                UpdateProgress("completed", "会議記録をローカルに保管しました（アップロード保留）。", 100);
+                string reason = !appConfig.Box.IsAuthenticated
+                    ? "Box未認証のため自動アップロード保留"
+                    : (!shouldUpload ? "自動アップロードOFF設定のため保留" : "アップロード保留");
+                UpdateProgress("completed", $"会議記録をローカルに保管しました（{reason}）。", 100);
                 PipelineCompleted?.Invoke("会議記録のローカル保存が完了しました。");
-                AppLogger.Info($"📁 会議記録をローカルに保管しました (未送信スプールに保持 / セッション: {stoppingSessionId})");
+                AppLogger.Info($"📁 会議記録をローカルに保管しました ({reason} / セッション: {stoppingSessionId})");
             }
 
             return new RecordingStopResult(

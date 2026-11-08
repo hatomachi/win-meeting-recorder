@@ -116,11 +116,26 @@ public class BoxConfig
         !string.IsNullOrWhiteSpace(ClientSecret);
 
     /// <summary>
+    /// リフレッシュトークンによる自動更新が可能か (OAuth2 連携済みかつ資格情報あり)
+    /// </summary>
+    public bool CanRefreshToken =>
+        !string.IsNullOrWhiteSpace(RefreshToken) && HasCredentials;
+
+    /// <summary>
+    /// アクセストークンが現在有効か（安全マージン2分を考慮）
+    /// </summary>
+    public bool IsAccessTokenValid =>
+        !string.IsNullOrWhiteSpace(AccessToken) &&
+        (!TokenExpiresAt.HasValue || TokenExpiresAt.Value > DateTime.UtcNow.AddMinutes(2));
+
+    /// <summary>
     /// 有効なトークンまたはDeveloperTokenを保持しているか
+    /// ※アクセストークン期限切れ(60分)でもRefreshTokenがあれば自動更新可能なため認証済みと判定する
     /// </summary>
     public bool IsAuthenticated =>
         !string.IsNullOrWhiteSpace(DeveloperToken) ||
-        (!string.IsNullOrWhiteSpace(AccessToken) && (!TokenExpiresAt.HasValue || TokenExpiresAt.Value > DateTime.UtcNow));
+        IsAccessTokenValid ||
+        CanRefreshToken;
 
     /// <summary>
     /// 抽出された企業サブドメイン (例: "mycompany")
