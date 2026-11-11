@@ -161,7 +161,7 @@ public static class IndexHtml
         <div id="uploadProgressBar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-200" style="width: 0%"></div>
       </div>
       <div id="uploadSuccessMessage" class="hidden text-xs text-emerald-400 flex items-center justify-between pt-1">
-        <span>✅ 全ファイルのBoxアップロードが完了しました！</span>
+        <span>✅ BoxへのZIPアップロードが完了しました！</span>
         <a id="boxFolderLink" href="#" target="_blank" class="text-indigo-400 hover:underline flex items-center space-x-1">
           <span>Boxで確認</span>
           <span>↗</span>
@@ -211,7 +211,7 @@ public static class IndexHtml
         <div class="flex items-center space-x-2 pt-1">
           <label class="flex items-center space-x-1.5 cursor-pointer">
             <input type="checkbox" id="boxAutoUpload" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-            <span class="text-slate-300">停止時にBoxへ自動一括アップロード＆スプール消去</span>
+            <span class="text-slate-300">停止時にBoxへZIP自動アップロード＆スプール消去</span>
           </label>
         </div>
         <div class="flex items-center space-x-2">
@@ -818,7 +818,7 @@ public static class IndexHtml
             }, 6000);
           } else if (data.boxUpload && data.boxUpload.success) {
             uploadProgressBar.style.width = '100%';
-            uploadStatusText.textContent = '✅ Boxへの一括アップロード完了！';
+            uploadStatusText.textContent = '✅ BoxへのZIPアップロード完了！';
             uploadCountBadge.textContent = '完了';
             uploadSuccessMessage.classList.remove('hidden');
             if (data.boxUpload.folderUrl) {
@@ -1137,7 +1137,7 @@ public static class IndexHtml
         const data = await res.json();
         if (data.success) {
           uploadProgressBar.style.width = '100%';
-          uploadStatusText.textContent = '✅ Box へのアップロードが完了しました！';
+          uploadStatusText.textContent = '✅ Box へのZIPアップロードが完了しました！';
           uploadCountBadge.textContent = '完了';
           uploadSuccessMessage.classList.remove('hidden');
           if (data.folderUrl) {

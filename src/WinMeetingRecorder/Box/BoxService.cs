@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -10,7 +11,13 @@ using WinMeetingRecorder.Spool;
 
 namespace WinMeetingRecorder.Box;
 
-public record BoxUploadResult(bool Success, string Message, string? FolderId = null, string? FolderUrl = null);
+public record BoxUploadResult(
+    bool Success,
+    string Message,
+    string? FolderId = null,
+    string? FolderUrl = null,
+    string? FileId = null,
+    string? FileName = null);
 
 public record BoxAuthStatus(
     bool IsConfigured, 
@@ -495,56 +502,6 @@ public class BoxService
     }
 
     /// <summary>
-    /// セッションフォルダをBox上に新規作成
-    /// </summary>
-    public async Task<string> CreateSessionFolderAsync(string parentFolderId, string folderName)
-    {
-        return await ExecuteWithTokenRetryAsync(async token =>
-        {
-            var bodyObj = new
-            {
-                name = folderName,
-                parent = new { id = parentFolderId }
-            };
-
-            var jsonBody = JsonSerializer.Serialize(bodyObj);
-            using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.box.com/2.0/folders")
-            {
-                Content = new StringContent(jsonBody, Encoding.UTF8, "application/json")
-            };
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            var res = await Http.SendAsync(req);
-            var jsonRes = await res.Content.ReadAsStringAsync();
-
-            if (res.StatusCode == HttpStatusCode.Created)
-            {
-                using var doc = JsonDocument.Parse(jsonRes);
-                return doc.RootElement.GetProperty("id").GetString()!;
-            }
-
-            // 既に同名フォルダが存在する場合 (409 Conflict)
-            if (res.StatusCode == HttpStatusCode.Conflict)
-            {
-                using var doc = JsonDocument.Parse(jsonRes);
-                if (doc.RootElement.TryGetProperty("context_info", out var ctx) &&
-                    ctx.TryGetProperty("conflicts", out var conflicts) &&
-                    conflicts.GetArrayLength() > 0)
-                {
-                    return conflicts[0].GetProperty("id").GetString()!;
-                }
-            }
-
-            if (res.StatusCode == HttpStatusCode.Unauthorized)
-            {
-                throw new BoxUnauthorizedException($"フォルダ作成認証エラー (401 Unauthorized): {jsonRes}");
-            }
-
-            throw new InvalidOperationException($"フォルダ作成に失敗しました: {res.StatusCode} - {jsonRes}");
-        });
-    }
-
-    /// <summary>
     /// 単一ファイルのアップロード (50MB以下は通常アップロード、50MB超はChunked Upload Session)
     /// </summary>
     public async Task<string> UploadFileAsync(string folderId, string filePath, string? uploadFileName = null, IProgress<long>? progress = null)
@@ -565,38 +522,47 @@ public class BoxService
         }
         else
         {
-            return await UploadFileStandardAsync(folderId, filePath, fileName);
+            return await UploadFileStandardAsync(folderId, filePath, fileName, progress);
         }
     }
 
     /// <summary>
-    /// 通常のマルチパートアップロード (50MB以下)
+    /// 通常のマルチパートアップロード (50MB以下 / 同名衝突時は新バージョンとして上書き)
     /// </summary>
-    private async Task<string> UploadFileStandardAsync(string folderId, string filePath, string fileName)
+    private async Task<string> UploadFileStandardAsync(string folderId, string filePath, string fileName, IProgress<long>? progress)
     {
         return await ExecuteWithTokenRetryAsync(async token =>
         {
-            using var form = new MultipartFormDataContent();
-            var attrJson = JsonSerializer.Serialize(new
+            var createAttrJson = JsonSerializer.Serialize(new
             {
                 name = fileName,
                 parent = new { id = folderId }
             });
 
-            form.Add(new StringContent(attrJson, Encoding.UTF8, "application/json"), "attributes");
+            var (res, jsonRes) = await SendMultipartUploadAsync(
+                "https://upload.box.com/api/2.0/files/content",
+                createAttrJson,
+                filePath,
+                fileName,
+                token,
+                progress);
 
-            using var fileStream = File.OpenRead(filePath);
-            using var streamContent = new StreamContent(fileStream);
-            form.Add(streamContent, "file", fileName);
-
-            using var req = new HttpRequestMessage(HttpMethod.Post, "https://upload.box.com/api/2.0/files/content")
+            if (res.StatusCode == HttpStatusCode.Conflict)
             {
-                Content = form
-            };
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            var res = await Http.SendAsync(req);
-            var jsonRes = await res.Content.ReadAsStringAsync();
+                var existingFileId = TryExtractConflictFileId(jsonRes);
+                if (!string.IsNullOrEmpty(existingFileId))
+                {
+                    AppLogger.Info($"[BoxService] ℹ️ 同名ZIPがBox上に既に存在するため新バージョンとして上書きします: {fileName} (File ID: {existingFileId})");
+                    var updateAttrJson = JsonSerializer.Serialize(new { name = fileName });
+                    (res, jsonRes) = await SendMultipartUploadAsync(
+                        $"https://upload.box.com/api/2.0/files/{existingFileId}/content",
+                        updateAttrJson,
+                        filePath,
+                        fileName,
+                        token,
+                        progress);
+                }
+            }
 
             if (res.IsSuccessStatusCode)
             {
@@ -617,8 +583,37 @@ public class BoxService
         });
     }
 
+    private async Task<(HttpResponseMessage Response, string Body)> SendMultipartUploadAsync(
+        string url,
+        string attrJson,
+        string filePath,
+        string fileName,
+        string token,
+        IProgress<long>? progress)
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(attrJson, Encoding.UTF8, "application/json"), "attributes");
+
+        var fileLength = new FileInfo(filePath).Length;
+        using Stream uploadStream = progress != null
+            ? new ProgressStream(File.OpenRead(filePath), progress, fileLength)
+            : File.OpenRead(filePath);
+        using var streamContent = new StreamContent(uploadStream);
+        form.Add(streamContent, "file", fileName);
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = form
+        };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var res = await Http.SendAsync(req);
+        var jsonRes = await res.Content.ReadAsStringAsync();
+        return (res, jsonRes);
+    }
+
     /// <summary>
-    /// Box Chunked Upload API (大容量ファイル用 Upload Session)
+    /// Box Chunked Upload API (大容量ファイル用 Upload Session / 同名衝突時は新バージョンとして上書き)
     /// </summary>
     private async Task<string> UploadLargeFileChunkedAsync(string folderId, string filePath, string fileName, IProgress<long>? progress)
     {
@@ -628,21 +623,32 @@ public class BoxService
             var totalBytes = fileInfo.Length;
 
             // 1. セッション作成 (POST /files/upload_sessions)
-            var createSessionBody = JsonSerializer.Serialize(new
-            {
-                folder_id = folderId,
-                file_size = totalBytes,
-                file_name = fileName
-            });
+            var (createRes, createJson) = await CreateUploadSessionRequestAsync(
+                "https://upload.box.com/api/2.0/files/upload_sessions",
+                JsonSerializer.Serialize(new
+                {
+                    folder_id = folderId,
+                    file_size = totalBytes,
+                    file_name = fileName
+                }),
+                token);
 
-            using var createReq = new HttpRequestMessage(HttpMethod.Post, "https://upload.box.com/api/2.0/files/upload_sessions")
+            if (createRes.StatusCode == HttpStatusCode.Conflict)
             {
-                Content = new StringContent(createSessionBody, Encoding.UTF8, "application/json")
-            };
-            createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            var createRes = await Http.SendAsync(createReq);
-            var createJson = await createRes.Content.ReadAsStringAsync();
+                var existingFileId = TryExtractConflictFileId(createJson);
+                if (!string.IsNullOrEmpty(existingFileId))
+                {
+                    AppLogger.Info($"[BoxService] ℹ️ 同名大容量ZIPがBox上に既に存在するため新バージョンとして上書きします: {fileName} (File ID: {existingFileId})");
+                    (createRes, createJson) = await CreateUploadSessionRequestAsync(
+                        $"https://upload.box.com/api/2.0/files/{existingFileId}/upload_sessions",
+                        JsonSerializer.Serialize(new
+                        {
+                            file_size = totalBytes,
+                            file_name = fileName
+                        }),
+                        token);
+                }
+            }
 
             if (createRes.StatusCode == HttpStatusCode.Unauthorized)
             {
@@ -661,104 +667,187 @@ public class BoxService
             var endpoints = sessionRoot.GetProperty("session_endpoints");
             var uploadPartUrl = endpoints.GetProperty("upload_part").GetString()!;
             var commitUrl = endpoints.GetProperty("commit").GetString()!;
+            var abortUrl = endpoints.TryGetProperty("abort", out var abortProp) ? abortProp.GetString() : null;
 
-            // 2. パート分割アップロード
-            var committedParts = new List<object>();
-            using var fileStream = File.OpenRead(filePath);
-            byte[] buffer = new byte[partSize];
-            long offset = 0;
-
-            using var sha1Full = SHA1.Create();
-
-            for (int i = 0; i < totalParts; i++)
+            try
             {
-                int bytesRead = await fileStream.ReadAsync(buffer, 0, (int)Math.Min(partSize, totalBytes - offset));
-                if (bytesRead <= 0) break;
+                // 2. パート分割アップロード
+                var committedParts = new List<object>();
+                using var fileStream = File.OpenRead(filePath);
+                byte[] buffer = new byte[partSize];
+                long offset = 0;
 
-                long rangeStart = offset;
-                long rangeEnd = offset + bytesRead - 1;
+                using var sha1Full = SHA1.Create();
 
-                // パート用 SHA-1 ハッシュ
-                using var sha1Part = SHA1.Create();
-                var partHash = sha1Part.ComputeHash(buffer, 0, bytesRead);
-                var partShaBase64 = Convert.ToBase64String(partHash);
-
-                // 全体ハッシュの途中計算
-                sha1Full.TransformBlock(buffer, 0, bytesRead, null, 0);
-
-                using var partContent = new ByteArrayContent(buffer, 0, bytesRead);
-                partContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-                partContent.Headers.Add("Digest", $"sha={partShaBase64}");
-                partContent.Headers.Add("Content-Range", $"bytes {rangeStart}-{rangeEnd}/{totalBytes}");
-
-                using var partReq = new HttpRequestMessage(HttpMethod.Put, uploadPartUrl)
+                for (int i = 0; i < totalParts; i++)
                 {
-                    Content = partContent
+                    int targetBytes = (int)Math.Min(partSize, totalBytes - offset);
+                    int bytesRead = 0;
+                    while (bytesRead < targetBytes)
+                    {
+                        int n = await fileStream.ReadAsync(buffer, bytesRead, targetBytes - bytesRead);
+                        if (n <= 0) break;
+                        bytesRead += n;
+                    }
+                    if (bytesRead <= 0) break;
+
+                    long rangeStart = offset;
+                    long rangeEnd = offset + bytesRead - 1;
+
+                    // パート用 SHA-1 ハッシュ
+                    using var sha1Part = SHA1.Create();
+                    var partHash = sha1Part.ComputeHash(buffer, 0, bytesRead);
+                    var partShaBase64 = Convert.ToBase64String(partHash);
+
+                    // 全体ハッシュの途中計算
+                    sha1Full.TransformBlock(buffer, 0, bytesRead, null, 0);
+
+                    using var partContent = new ByteArrayContent(buffer, 0, bytesRead);
+                    partContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                    partContent.Headers.Add("Digest", $"sha={partShaBase64}");
+                    partContent.Headers.Add("Content-Range", $"bytes {rangeStart}-{rangeEnd}/{totalBytes}");
+
+                    using var partReq = new HttpRequestMessage(HttpMethod.Put, uploadPartUrl)
+                    {
+                        Content = partContent
+                    };
+                    partReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                    var partRes = await Http.SendAsync(partReq);
+                    var partJson = await partRes.Content.ReadAsStringAsync();
+
+                    if (partRes.StatusCode == HttpStatusCode.Unauthorized)
+                    {
+                        throw new BoxUnauthorizedException($"パート {i + 1}/{totalParts} 認証エラー (401 Unauthorized): {partJson}");
+                    }
+
+                    if (!partRes.IsSuccessStatusCode)
+                    {
+                        throw new InvalidOperationException($"パート {i + 1}/{totalParts} アップロード失敗: {partRes.StatusCode} - {partJson}");
+                    }
+
+                    using var partDoc = JsonDocument.Parse(partJson);
+                    var partObj = partDoc.RootElement.GetProperty("part");
+                    committedParts.Add(new
+                    {
+                        part_id = partObj.GetProperty("part_id").GetString(),
+                        offset = partObj.GetProperty("offset").GetInt64(),
+                        size = partObj.GetProperty("size").GetInt64(),
+                        sha1 = partObj.GetProperty("sha1").GetString()
+                    });
+
+                    offset += bytesRead;
+                    progress?.Report(offset);
+                    Console.WriteLine($"[BoxService] ⬆️ Chunked アップロード中: {offset * 100 / totalBytes}% ({i + 1}/{totalParts})");
+                }
+
+                sha1Full.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                var fullShaBase64 = Convert.ToBase64String(sha1Full.Hash!);
+
+                // 3. セッションのコミット (POST /files/upload_sessions/{id}/commit)
+                var commitBody = JsonSerializer.Serialize(new { parts = committedParts });
+                using var commitReq = new HttpRequestMessage(HttpMethod.Post, commitUrl)
+                {
+                    Content = new StringContent(commitBody, Encoding.UTF8, "application/json")
                 };
-                partReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                commitReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                commitReq.Headers.Add("Digest", $"sha={fullShaBase64}");
 
-                var partRes = await Http.SendAsync(partReq);
-                var partJson = await partRes.Content.ReadAsStringAsync();
+                var commitRes = await Http.SendAsync(commitReq);
+                var commitJson = await commitRes.Content.ReadAsStringAsync();
 
-                if (!partRes.IsSuccessStatusCode)
+                if (commitRes.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    throw new InvalidOperationException($"パート {i + 1}/{totalParts} アップロード失敗: {partRes.StatusCode} - {partJson}");
+                    throw new BoxUnauthorizedException($"Chunked Upload コミット認証エラー (401 Unauthorized): {commitJson}");
                 }
 
-                using var partDoc = JsonDocument.Parse(partJson);
-                var partObj = partDoc.RootElement.GetProperty("part");
-                committedParts.Add(new
+                if (commitRes.StatusCode == HttpStatusCode.Created || commitRes.StatusCode == HttpStatusCode.Accepted)
                 {
-                    part_id = partObj.GetProperty("part_id").GetString(),
-                    offset = partObj.GetProperty("offset").GetInt64(),
-                    size = partObj.GetProperty("size").GetInt64(),
-                    sha1 = partObj.GetProperty("sha1").GetString()
-                });
-
-                offset += bytesRead;
-                progress?.Report(offset);
-                Console.WriteLine($"[BoxService] ⬆️ Chunked アップロード中: {offset * 100 / totalBytes}% ({i + 1}/{totalParts})");
-            }
-
-            sha1Full.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-            var fullShaBase64 = Convert.ToBase64String(sha1Full.Hash!);
-
-            // 3. セッションのコミット (POST /files/upload_sessions/{id}/commit)
-            var commitBody = JsonSerializer.Serialize(new { parts = committedParts });
-            using var commitReq = new HttpRequestMessage(HttpMethod.Post, commitUrl)
-            {
-                Content = new StringContent(commitBody, Encoding.UTF8, "application/json")
-            };
-            commitReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            commitReq.Headers.Add("Digest", $"sha={fullShaBase64}");
-
-            var commitRes = await Http.SendAsync(commitReq);
-            var commitJson = await commitRes.Content.ReadAsStringAsync();
-
-            if (commitRes.StatusCode == HttpStatusCode.Created || commitRes.StatusCode == HttpStatusCode.Accepted)
-            {
-                using var commitDoc = JsonDocument.Parse(commitJson);
-                var entries = commitDoc.RootElement.GetProperty("entries");
-                if (entries.GetArrayLength() > 0)
-                {
-                    return entries[0].GetProperty("id").GetString()!;
+                    using var commitDoc = JsonDocument.Parse(commitJson);
+                    var entries = commitDoc.RootElement.GetProperty("entries");
+                    if (entries.GetArrayLength() > 0)
+                    {
+                        return entries[0].GetProperty("id").GetString()!;
+                    }
                 }
-            }
 
-            throw new InvalidOperationException($"Chunked Upload コミット失敗: {commitRes.StatusCode} - {commitJson}");
+                throw new InvalidOperationException($"Chunked Upload コミット失敗: {commitRes.StatusCode} - {commitJson}");
+            }
+            catch
+            {
+                if (!string.IsNullOrEmpty(abortUrl))
+                {
+                    await TryAbortUploadSessionAsync(abortUrl, token);
+                }
+                throw;
+            }
         });
     }
 
+    private async Task<(HttpResponseMessage Response, string Body)> CreateUploadSessionRequestAsync(
+        string url,
+        string bodyJson,
+        string token)
+    {
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+        };
+        createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var createRes = await Http.SendAsync(createReq);
+        var createJson = await createRes.Content.ReadAsStringAsync();
+        return (createRes, createJson);
+    }
+
+    private async Task TryAbortUploadSessionAsync(string abortUrl, string token)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Delete, abortUrl);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            await Http.SendAsync(req);
+        }
+        catch { /* ignore cleanup failure */ }
+    }
+
+    private static string? TryExtractConflictFileId(string jsonRes)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonRes);
+            if (doc.RootElement.TryGetProperty("context_info", out var ctx) &&
+                ctx.TryGetProperty("conflicts", out var conflicts))
+            {
+                if (conflicts.ValueKind == JsonValueKind.Object &&
+                    conflicts.TryGetProperty("id", out var idProp))
+                {
+                    return idProp.GetString();
+                }
+
+                if (conflicts.ValueKind == JsonValueKind.Array &&
+                    conflicts.GetArrayLength() > 0 &&
+                    conflicts[0].TryGetProperty("id", out var arrIdProp))
+                {
+                    return arrIdProp.GetString();
+                }
+            }
+        }
+        catch { /* ignore parse errors */ }
+
+        return null;
+    }
+
     /// <summary>
-    /// 録音セッションの全ファイルをBoxへ一括自動アップロード
-    /// 順序: 1. meeting_audio.mp3 -> 2. screen_*.jpg -> 3. meta.json (★必ず最後)
-    /// 成功時はローカルスプール一時ファイルを自動クリーンアップ
+    /// 録音セッションを &lt;SessionId&gt;.zip に圧縮し、テーマ親フォルダ直下へ1ファイルとしてアップロード
+    /// ZIP直下構造: meeting_audio.mp3, images/*.jpg, meta.json (余計な親フォルダ階層なし)
+    /// 成功時はローカルのZIPファイルおよびスプール一時ファイルを自動クリーンアップ
     /// </summary>
     public async Task<BoxUploadResult> UploadSessionAsync(
         string sessionDir, 
         MeetingSessionMetadata metadata, 
         string? specifiedThemeId = null,
-        Action<int, int, string>? onProgress = null)
+        Action<int, string, string>? onProgress = null)
     {
         if (!Directory.Exists(sessionDir))
         {
@@ -790,61 +879,58 @@ public class BoxService
             return new BoxUploadResult(false, $"Box 認証トークンの準備に失敗しました: {ex.Message}");
         }
 
-        AppLogger.Info($"🚀 Boxへの一括アップロードを開始します (テーマ: {theme.Name}, 親フォルダ: {theme.BoxFolderId})");
+        var trimmedSessionDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sessionDir));
+        var sessionId = !string.IsNullOrWhiteSpace(metadata.SessionId)
+            ? metadata.SessionId.Trim()
+            : new DirectoryInfo(trimmedSessionDir).Name;
+        var zipFileName = $"{sessionId}.zip";
+        var zipParentDir = Directory.GetParent(trimmedSessionDir)?.FullName ?? Path.GetTempPath();
+        var zipPath = Path.Combine(zipParentDir, zipFileName);
+
+        AppLogger.Info($"🚀 BoxへのZIPアップロードを開始します (テーマ: {theme.Name}, 親フォルダ: {theme.BoxFolderId}, ファイル: {zipFileName})");
 
         try
         {
-            // 1. セッションフォルダをBox上に作成 (例: 20261031_214500_abcd1234)
-            var sessionFolderName = metadata.SessionId;
-            var boxFolderId = await CreateSessionFolderAsync(theme.BoxFolderId, sessionFolderName);
-            AppLogger.Info($"📁 セッションフォルダ作成完了: {sessionFolderName} (Box Folder ID: {boxFolderId})");
-
-            // 2. アップロード対象ファイルのリストアップ
-            var uploadFiles = new List<(string LocalPath, string RemoteName)>();
-
-            // 音声ファイル (MP3優先、なければWAV)
-            var mp3Path = Path.Combine(sessionDir, "meeting_audio.mp3");
-            var wavPath = Path.Combine(sessionDir, "meeting_audio.wav");
+            // 1. パッケージ対象ファイルの収集 (MP3優先・なければWAV、および images/*.jpg)
+            var mp3Path = Path.Combine(trimmedSessionDir, "meeting_audio.mp3");
+            var wavPath = Path.Combine(trimmedSessionDir, "meeting_audio.wav");
+            string? audioLocalPath = null;
             string audioFileName = "meeting_audio.mp3";
 
             if (File.Exists(mp3Path))
             {
-                uploadFiles.Add((mp3Path, "meeting_audio.mp3"));
+                audioLocalPath = mp3Path;
+                audioFileName = "meeting_audio.mp3";
             }
             else if (File.Exists(wavPath))
             {
-                uploadFiles.Add((wavPath, "meeting_audio.wav"));
+                audioLocalPath = wavPath;
                 audioFileName = "meeting_audio.wav";
             }
 
-            // スクリーンショット画像全件 (screen_*.jpg)
-            var imagesDir = Path.Combine(sessionDir, "images");
+            var imagesDir = Path.Combine(trimmedSessionDir, "images");
+            var jpgFiles = Directory.Exists(imagesDir)
+                ? Directory.GetFiles(imagesDir, "*.jpg").OrderBy(f => f).ToList()
+                : new List<string>();
+
             var imageItems = new List<BoxMetaImageItem>();
-
-            if (Directory.Exists(imagesDir))
+            foreach (var imgPath in jpgFiles)
             {
-                var jpgFiles = Directory.GetFiles(imagesDir, "*.jpg").OrderBy(f => f).ToList();
-                foreach (var imgPath in jpgFiles)
+                var name = Path.GetFileName(imgPath);
+                var item = metadata.Images.FirstOrDefault(i => i.FileName == name);
+                var ts = item?.Timestamp ?? File.GetCreationTime(imgPath);
+                imageItems.Add(new BoxMetaImageItem
                 {
-                    var name = Path.GetFileName(imgPath);
-                    uploadFiles.Add((imgPath, name));
-
-                    // meta.json 用のタイムスタンプ記録
-                    var item = metadata.Images.FirstOrDefault(i => i.FileName == name);
-                    var ts = item?.Timestamp ?? File.GetCreationTime(imgPath);
-                    imageItems.Add(new BoxMetaImageItem
-                    {
-                        Filename = name,
-                        Timestamp = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
-                    });
-                }
+                    Filename = name,
+                    Timestamp = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
+                });
             }
 
-            // 3. meta.json の生成 (★アップロードは必ず最後)
+            // 2. meta.json の生成
             var startTimeStr = metadata.StartTime.ToString("yyyy-MM-ddTHH:mm:sszzz");
             var metaObj = new BoxMetaJson
             {
-                SessionId = metadata.SessionId,
+                SessionId = sessionId,
                 ThemeId = theme.Id,
                 Memo = metadata.Memo ?? "",
                 StartTime = startTimeStr,
@@ -854,47 +940,57 @@ public class BoxService
                 ImageFiles = imageItems
             };
 
-            var metaJsonPath = Path.Combine(sessionDir, "meta.json");
+            var metaJsonPath = Path.Combine(trimmedSessionDir, "meta.json");
             var metaJsonString = JsonSerializer.Serialize(metaObj, JsonOptions);
             await File.WriteAllTextAsync(metaJsonPath, metaJsonString, Encoding.UTF8);
 
-            // 合計ファイル数: 音声 + スクショ + meta.json
-            int totalFiles = uploadFiles.Count + 1;
-            int current = 0;
+            // 3. セッションまるごと <SessionId>.zip に圧縮 (zip直下に mp3, images/, meta.json)
+            onProgress?.Invoke(10, $"セッションをZIP圧縮中: {zipFileName}", zipFileName);
+            AppLogger.Info($"🗜️ セッションをZIP圧縮中: {zipFileName} (音声: {(audioLocalPath != null ? audioFileName : "なし")}, 画像: {jpgFiles.Count}枚)");
 
-            // 4. 音声と画像のアップロード
-            foreach (var (localPath, remoteName) in uploadFiles)
+            await CreateSessionZipAsync(zipPath, audioLocalPath, audioFileName, jpgFiles, metaJsonPath);
+
+            var zipSizeBytes = new FileInfo(zipPath).Length;
+            var zipSizeMb = zipSizeBytes / 1024.0 / 1024.0;
+            AppLogger.Info($"📦 ZIP圧縮完了: {zipFileName} ({zipSizeMb:F2} MB) -> 親フォルダ {theme.BoxFolderId} 直下へアップロード開始");
+
+            // 4. 親フォルダ直下へ <SessionId>.zip を1ファイルでアップロード (サブフォルダ作成なし)
+            var uploadProgress = new SyncProgress<long>(bytesSent =>
             {
-                current++;
-                onProgress?.Invoke(current, totalFiles, remoteName);
-                Console.WriteLine($"[BoxService] ⬆️ アップロード中 ({current}/{totalFiles}): {remoteName}");
-                await UploadFileAsync(boxFolderId, localPath, remoteName);
-            }
+                if (zipSizeBytes <= 0) return;
+                int uploadPct = Math.Clamp((int)(bytesSent * 100 / zipSizeBytes), 0, 100);
+                int overallPct = 20 + (int)(uploadPct * 0.70);
+                onProgress?.Invoke(overallPct, $"BoxへZIPアップロード中: {zipFileName} ({uploadPct}%)", $"{zipFileName} ({uploadPct}%)");
+            });
 
-            // 5. ★一番最後に meta.json をアップロード (後段サーバーの完了検知トリガー)
-            current++;
-            onProgress?.Invoke(current, totalFiles, "meta.json");
-            AppLogger.Info($"⭐ [最終トリガー] meta.json をアップロード中 ({current}/{totalFiles})...");
-            await UploadFileAsync(boxFolderId, metaJsonPath, "meta.json");
+            onProgress?.Invoke(20, $"BoxへZIPアップロード中: {zipFileName} (0%)", $"{zipFileName} (0%)");
+            var uploadedFileId = await UploadFileAsync(theme.BoxFolderId, zipPath, zipFileName, uploadProgress);
 
-            // 6. 二重安全確認: Box API でフォルダ内の全ファイルを再取得し、実在・サイズを厳格に検証
-            AppLogger.Info($"🔍 [二重安全確認] Box APIで全ファイルの実在を検証中 (Folder ID: {boxFolderId})...");
-            var expectedNames = uploadFiles.Select(f => f.RemoteName).Append("meta.json").ToList();
-            await VerifyFolderFilesAsync(boxFolderId, expectedNames);
+            // 5. 二重安全確認: Box API でアップロード済みZIPファイルの実在・親フォルダ・サイズを厳格検証
+            onProgress?.Invoke(92, $"🔍 Box上のZIPファイル実在・サイズを確認中: {zipFileName}", "検証中...");
+            AppLogger.Info($"🔍 [二重安全確認] Box APIでZIPファイルの実在・サイズを検証中 (File ID: {uploadedFileId})...");
+            await VerifyUploadedFileAsync(uploadedFileId, zipFileName, theme.BoxFolderId, zipSizeBytes);
 
-            var folderUrl = boxConfig.GetFolderUrl(boxFolderId);
+            var folderUrl = boxConfig.GetFolderUrl(theme.BoxFolderId);
             var startTimeDisplay = metadata.StartTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             var memoDisplay = !string.IsNullOrWhiteSpace(metadata.Memo) ? $" [メモ: {metadata.Memo}]" : "";
 
-            // ★目立つログ出力（日時・テーマ・ファイル数・Boxリンク）
-            AppLogger.Info($"✅ 【Box格納完了】テーマ: {theme.Name}{memoDisplay} ｜ {startTimeDisplay} 会議 (計{totalFiles}ファイル)");
+            // ★目立つログ出力（日時・テーマ・ZIPファイル情報・Boxリンク）
+            AppLogger.Info($"✅ 【Box格納完了】テーマ: {theme.Name}{memoDisplay} ｜ {startTimeDisplay} 会議 ({zipFileName}, {zipSizeMb:F2} MB, 画像{imageItems.Count}枚)");
             AppLogger.Info($"🔗 Boxフォルダ: {folderUrl}");
 
-            // 7. 実在確認完了後のみ、ローカルスプール一時ファイルを自動クリーンアップ
-            TryCleanupSpoolFiles(sessionDir);
-            AppLogger.Info($"🧹 ローカルスプール一時ファイルを安全に消去しました: {sessionFolderName}");
+            // 6. 実在確認完了後のみ、ローカルのZIPファイルおよびスプール一時ファイルを自動クリーンアップ
+            TryDeleteFile(zipPath);
+            TryCleanupSpoolFiles(trimmedSessionDir);
+            AppLogger.Info($"🧹 ローカルZIPおよびスプール一時ファイルを安全に消去しました: {zipFileName}");
 
-            return new BoxUploadResult(true, "Box への全件アップロードおよび実在検証が完了しました。", boxFolderId, folderUrl);
+            return new BoxUploadResult(
+                true,
+                $"Box へのZIPアップロード ({zipFileName}) および実在検証が完了しました。",
+                theme.BoxFolderId,
+                folderUrl,
+                uploadedFileId,
+                zipFileName);
         }
         catch (Exception ex)
         {
@@ -904,14 +1000,70 @@ public class BoxService
     }
 
     /// <summary>
-    /// Box API (GET /folders/{folderId}/items) を呼び出し、
-    /// アップロードした全ファイルがBox上に確実に存在し、ファイルサイズが0より大きいことを厳格に検証する
+    /// ZIP直下に mp3, images/, meta.json を配置するアーカイブを作成（余計な親フォルダ階層なし）
     /// </summary>
-    private async Task VerifyFolderFilesAsync(string boxFolderId, List<string> expectedFileNames)
+    private static async Task CreateSessionZipAsync(
+        string zipPath,
+        string? audioLocalPath,
+        string audioFileName,
+        List<string> jpgFiles,
+        string metaJsonPath)
+    {
+        var tempZipPath = zipPath + ".tmp";
+        await Task.Run(() =>
+        {
+            try
+            {
+                TryDeleteFile(tempZipPath);
+
+                using (var fs = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (var archive = new ZipArchive(fs, ZipArchiveMode.Create, leaveOpen: false, entryNameEncoding: Encoding.UTF8))
+                {
+                    if (audioLocalPath != null)
+                    {
+                        archive.CreateEntryFromFile(audioLocalPath, audioFileName, CompressionLevel.Fastest);
+                    }
+
+                    if (jpgFiles.Count > 0)
+                    {
+                        foreach (var imgPath in jpgFiles)
+                        {
+                            var name = Path.GetFileName(imgPath);
+                            archive.CreateEntryFromFile(imgPath, $"images/{name}", CompressionLevel.Fastest);
+                        }
+                    }
+                    else
+                    {
+                        // 画像0枚の場合でもzip直下に images/ フォルダが存在するようにする
+                        archive.CreateEntry("images/");
+                    }
+
+                    archive.CreateEntryFromFile(metaJsonPath, "meta.json", CompressionLevel.Fastest);
+                }
+
+                File.Move(tempZipPath, zipPath, overwrite: true);
+            }
+            catch
+            {
+                TryDeleteFile(tempZipPath);
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Box API (GET /files/{fileId}) を呼び出し、
+    /// アップロードしたZIPファイルが親フォルダ直下に確実に存在し、ファイルサイズが一致することを厳格に検証する
+    /// </summary>
+    private async Task VerifyUploadedFileAsync(
+        string fileId,
+        string expectedFileName,
+        string expectedParentFolderId,
+        long expectedSize)
     {
         await ExecuteWithTokenRetryAsync(async token =>
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/folders/{boxFolderId}/items?fields=id,name,type,size&limit=1000");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.box.com/2.0/files/{fileId}?fields=id,name,size,parent");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var res = await Http.SendAsync(req);
@@ -928,55 +1080,49 @@ public class BoxService
             }
 
             using var doc = JsonDocument.Parse(jsonRes);
-            var entries = doc.RootElement.GetProperty("entries");
+            var root = doc.RootElement;
+            var actualName = root.TryGetProperty("name", out var n) ? n.GetString() : null;
+            var actualSize = root.TryGetProperty("size", out var s) ? s.GetInt64() : 0;
+            var actualParentId = root.TryGetProperty("parent", out var p) && p.TryGetProperty("id", out var pid)
+                ? pid.GetString()
+                : null;
 
-            var boxFiles = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in entries.EnumerateArray())
+            if (!string.Equals(actualName, expectedFileName, StringComparison.OrdinalIgnoreCase))
             {
-                if (entry.GetProperty("type").GetString() == "file")
-                {
-                    var name = entry.GetProperty("name").GetString()!;
-                    var size = entry.TryGetProperty("size", out var s) ? s.GetInt64() : 0;
-                    boxFiles[name] = size;
-                }
+                throw new InvalidOperationException($"Box上のファイル名が一致しません (期待: {expectedFileName}, 実際: {actualName})");
             }
 
-            var missingFiles = new List<string>();
-            var zeroByteFiles = new List<string>();
-
-            foreach (var expected in expectedFileNames)
+            if (!string.Equals(actualParentId, expectedParentFolderId, StringComparison.Ordinal))
             {
-                if (!boxFiles.TryGetValue(expected, out var size))
-                {
-                    missingFiles.Add(expected);
-                }
-                else if (size <= 0)
-                {
-                    zeroByteFiles.Add(expected);
-                }
+                throw new InvalidOperationException($"Box上の親フォルダIDが一致しません (期待: {expectedParentFolderId}, 実際: {actualParentId})");
             }
 
-            if (missingFiles.Count > 0 || zeroByteFiles.Count > 0)
+            if (actualSize <= 0 || actualSize != expectedSize)
             {
-                var msg = new StringBuilder("Box上のファイル検証に失敗しました:");
-                if (missingFiles.Count > 0)
-                {
-                    msg.Append($" [未検出: {string.Join(", ", missingFiles)}]");
-                }
-                if (zeroByteFiles.Count > 0)
-                {
-                    msg.Append($" [0バイト不正: {string.Join(", ", zeroByteFiles)}]");
-                }
-                throw new InvalidOperationException(msg.ToString());
+                throw new InvalidOperationException($"Box上のファイルサイズが一致しません (期待: {expectedSize} bytes, 実際: {actualSize} bytes)");
             }
 
             return true;
         });
     }
 
+    private static void TryDeleteFile(string filePath)
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                File.Delete(filePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BoxService] ⚠️ ファイル削除警告 ({filePath}): {ex.Message}");
+        }
+    }
+
     /// <summary>
     /// アップロード成功後のスプール一時ファイルクリーンアップ
-    /// (WAV, MP3, images/*.jpg, meta.json を消去。セッション情報 metadata.json は削除または保管)
     /// </summary>
     private static void TryCleanupSpoolFiles(string sessionDir)
     {
@@ -993,5 +1139,89 @@ public class BoxService
         {
             Console.WriteLine($"[BoxService] ⚠️ クリーンアップ警告: {ex.Message}");
         }
+    }
+
+    private sealed class ProgressStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly IProgress<long> _progress;
+        private readonly long _totalLength;
+        private long _lastReportedBytes;
+
+        public ProgressStream(Stream inner, IProgress<long> progress, long totalLength)
+        {
+            _inner = inner;
+            _progress = progress;
+            _totalLength = totalLength;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => _inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position
+        {
+            get => _inner.Position;
+            set => _inner.Position = value;
+        }
+
+        public override void Flush() => _inner.Flush();
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int n = _inner.Read(buffer, offset, count);
+            ReportIfNeeded(n);
+            return n;
+        }
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            int n = await _inner.ReadAsync(buffer, offset, count, cancellationToken);
+            ReportIfNeeded(n);
+            return n;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            int n = await _inner.ReadAsync(buffer, cancellationToken);
+            ReportIfNeeded(n);
+            return n;
+        }
+
+        private void ReportIfNeeded(int bytesRead)
+        {
+            if (bytesRead <= 0) return;
+            long pos = Math.Min(_totalLength, _inner.Position);
+            if (pos >= _totalLength || pos - _lastReportedBytes >= 262144)
+            {
+                _lastReportedBytes = pos;
+                _progress.Report(pos);
+            }
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class SyncProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+
+        public SyncProgress(Action<T> handler)
+        {
+            _handler = handler;
+        }
+
+        public void Report(T value) => _handler(value);
     }
 }

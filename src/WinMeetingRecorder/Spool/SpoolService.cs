@@ -331,21 +331,40 @@ public class SpoolService
     }
 
     /// <summary>
-    /// セッションディレクトリを安全に削除します (GitLab送信成功時)
+    /// セッションディレクトリ（および関連ローカルZIP）を安全に削除します
     /// </summary>
     public bool DeleteSession(string sessionDirOrId)
     {
         lock (_lock)
         {
             var dir = ResolveSessionDir(sessionDirOrId);
-            if (!Directory.Exists(dir))
+            var trimmedDir = Path.TrimEndingDirectorySeparator(dir);
+            var parentDir = Directory.GetParent(trimmedDir)?.FullName ?? _spoolBaseDir;
+            var sessionName = new DirectoryInfo(trimmedDir).Name;
+            var zipPath = Path.Combine(parentDir, $"{sessionName}.zip");
+            var tempZipPath = zipPath + ".tmp";
+
+            bool dirExists = Directory.Exists(dir);
+            bool zipExists = File.Exists(zipPath);
+            if (!dirExists && !zipExists)
             {
                 return false;
             }
 
             try
             {
-                Directory.Delete(dir, true);
+                if (dirExists)
+                {
+                    Directory.Delete(dir, true);
+                }
+                if (File.Exists(zipPath))
+                {
+                    File.Delete(zipPath);
+                }
+                if (File.Exists(tempZipPath))
+                {
+                    File.Delete(tempZipPath);
+                }
                 Console.WriteLine($"[SpoolService] ✅ スプールを正常に削除しました: {dir}");
                 return true;
             }

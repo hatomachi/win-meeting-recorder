@@ -545,23 +545,21 @@ public static class Program
                 return Results.BadRequest(new { error = "セッションメタデータの読み込みに失敗しました。" });
             }
 
-            workflow.UpdateProgress("uploading", $"Boxへアップロード準備中: {req.SessionId}", 25);
+            workflow.UpdateProgress("uploading", $"BoxへZIP圧縮・アップロード準備中: {req.SessionId}", 25);
             var result = await boxService.UploadSessionAsync(
                 sessionDir, 
                 metadata, 
                 req.ThemeId,
-                onProgress: (cur, total, file) =>
+                onProgress: (pct, msg, badge) =>
                 {
-                    int pct = 25 + (int)((double)cur / Math.Max(1, total) * 70);
-                    string msg = file == "meta.json"
-                        ? "⭐ meta.json (完了トリガー) をアップロード中..."
-                        : $"Boxへアップロード中: {cur}/{total} ({file})";
-                    workflow.UpdateProgress("uploading", msg, pct, file);
+                    int scaledPct = 25 + (int)(Math.Clamp(pct, 0, 100) * 0.70);
+                    string phase = pct >= 90 ? "verifying" : "uploading";
+                    workflow.UpdateProgress(phase, msg, scaledPct, badge);
                 });
 
             if (result.Success)
             {
-                workflow.UpdateProgress("completed", "✅ Boxへの一括アップロード完了！", 100);
+                workflow.UpdateProgress("completed", "✅ BoxへのZIPアップロード完了！", 100);
             }
             else
             {

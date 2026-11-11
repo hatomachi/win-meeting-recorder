@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 namespace WinMeetingRecorder.Box;
 
 /// <summary>
-/// 後段の集約サーバーへ完了を通知するための meta.json スキーマ定義
-/// (※全音声・画像アップロード後に必ず一番最後にBoxへアップロードする)
+/// 後段の集約サーバーへセッション情報を通知するための meta.json スキーマ定義
+/// (※ &lt;SessionId&gt;.zip 直下に音声・images/ と同梱してBoxへアップロードする)
 /// </summary>
 public class BoxMetaJson
 {

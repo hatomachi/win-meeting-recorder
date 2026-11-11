@@ -607,27 +607,25 @@ public class RecordingWorkflowService
                     _spoolService.UpdateMetadata(metadata);
                 }
 
-                UpdateProgress("uploading", "Boxへアップロード準備中...", 40);
-                PipelineProgress?.Invoke("upload", "Boxへ会議記録の一括アップロードを開始します...");
+                UpdateProgress("uploading", "BoxへZIP圧縮・アップロード準備中...", 40);
+                PipelineProgress?.Invoke("upload", "Boxへ会議記録(ZIP)のアップロードを開始します...");
                 boxResult = await _boxService.UploadSessionAsync(
                     stoppingSessionDir, 
                     metadata!, 
                     effectiveThemeId, 
-                    onProgress: (cur, total, file) =>
+                    onProgress: (pct, msg, badge) =>
                     {
-                        int pct = 40 + (int)((double)cur / Math.Max(1, total) * 55);
-                        string msg = file == "meta.json"
-                            ? "⭐ meta.json (完了トリガー) をアップロード中..."
-                            : $"Boxへアップロード中: {cur}/{total} ({file})";
-                        UpdateProgress("uploading", msg, pct, file);
+                        int scaledPct = 40 + (int)(Math.Clamp(pct, 0, 100) * 0.55);
+                        string phase = pct >= 90 ? "verifying" : "uploading";
+                        UpdateProgress(phase, msg, scaledPct, badge);
                         PipelineProgress?.Invoke("upload", msg);
                     });
 
                 if (boxResult.Success && metadata != null)
                 {
                     metadata.Pipeline.Upload = "success";
-                    UpdateProgress("completed", "✅ Boxへの一括アップロード完了！", 100);
-                    PipelineCompleted?.Invoke("会議記録のBoxへのアップロードが完了しました！");
+                    UpdateProgress("completed", "✅ BoxへのZIPアップロード完了！", 100);
+                    PipelineCompleted?.Invoke("会議記録(ZIP)のBoxへのアップロードが完了しました！");
                 }
                 else if (metadata != null)
                 {
