@@ -1,4 +1,3 @@
-using System.Text.Json.Serialization;
 using WinMeetingRecorder.Box;
 
 namespace WinMeetingRecorder.Config;
@@ -62,24 +61,6 @@ public class GitLabConfig
 /// </summary>
 public class AppConfig
 {
-    /// <summary>
-    /// アプリケーション起動時に既定ブラウザで Web UI (http://localhost:5000) を自動で開くかどうか (デフォルト: true)
-    /// </summary>
-    public bool AutoOpenBrowser { get; set; } = true;
-
-    /// <summary>
-    /// config.json で "auto_open_browser" のスネークケースで指定された場合のフォールバック
-    /// </summary>
-    [JsonPropertyName("auto_open_browser")]
-    public bool? AutoOpenBrowserSnake
-    {
-        get => null;
-        set
-        {
-            if (value.HasValue) AutoOpenBrowser = value.Value;
-        }
-    }
-
     public ScreenConfig Screen { get; set; } = new();
     public BoxConfig Box { get; set; } = new();
     public GitLabConfig GitLab { get; set; } = new();

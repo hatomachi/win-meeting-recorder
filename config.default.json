@@ -1,5 +1,4 @@
 {
-  "AutoOpenBrowser": true,
   "Screen": {
     "CheckIntervalMs": 5000,
     "MaxIntervalSec": 0,

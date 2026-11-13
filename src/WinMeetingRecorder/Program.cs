@@ -480,19 +480,6 @@ public static class Program
             return Results.Ok(new { message = "設定を保存しました。" });
         });
 
-        // API: アプリケーション全体・動作設定の保存
-        app.MapPost("/api/config/app", (ConfigService configService, AppGeneralConfigSaveRequest req) =>
-        {
-            var config = configService.LoadConfig();
-            if (req.AutoOpenBrowser.HasValue)
-            {
-                config.AutoOpenBrowser = req.AutoOpenBrowser.Value;
-            }
-
-            configService.SaveConfig(config);
-            return Results.Ok(new { success = true, message = "アプリケーション動作設定を保存しました。" });
-        });
-
         // API: Box設定の保存
         app.MapPost("/api/config/box", (ConfigService configService, BoxConfigSaveRequest req) =>
         {
@@ -1236,12 +1223,8 @@ public static class Program
             await app.StopAsync();
         });
 
-        // 起動時に既定ブラウザを自動オープン (CLIフラグ --no-browser / -nb、または config.json の AutoOpenBrowser = false で抑制)
-        var appConfigService = app.Services.GetRequiredService<ConfigService>();
-        var currentConfig = appConfigService.LoadConfig();
-        bool shouldOpenBrowser = !noBrowser && currentConfig.AutoOpenBrowser;
-
-        if (shouldOpenBrowser)
+        // 起動時に既定ブラウザを自動オープン
+        if (!noBrowser)
         {
             try
             {
@@ -1251,17 +1234,6 @@ public static class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"[Program] ⚠️ ブラウザ自動起動スキップ: {ex.Message}");
-            }
-        }
-        else
-        {
-            if (noBrowser)
-            {
-                Console.WriteLine("[Program] 🔕 --no-browser オプションによりブラウザ自動オープンをスキップしました (タスクトレイ常駐)。");
-            }
-            else
-            {
-                Console.WriteLine("[Program] 🔕 config.json (AutoOpenBrowser: false) 設定によりブラウザ自動オープンをスキップしました (タスクトレイ常駐)。");
             }
         }
 
@@ -1309,8 +1281,6 @@ public record AiChatRequest(string SessionId, string Message);
 public record PipelineStepRequest(string SessionId, string Step, bool AutoFollow = true);
 
 public record PromptSaveRequest(string Prompt);
-
-public record AppGeneralConfigSaveRequest(bool? AutoOpenBrowser = null);
 
 public record BoxConfigSaveRequest(
     string? ClientId = null,
