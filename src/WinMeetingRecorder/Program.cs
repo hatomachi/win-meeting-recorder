@@ -480,6 +480,50 @@ public static class Program
             return Results.Ok(new { message = "設定を保存しました。" });
         });
 
+        // API: Box設定の保存
+        app.MapPost("/api/config/box", (ConfigService configService, BoxConfigSaveRequest req) =>
+        {
+            var config = configService.LoadConfig();
+            config.Box ??= new BoxConfig();
+
+            if (req.ClientId != null) config.Box.ClientId = req.ClientId.Trim();
+            if (req.ClientSecret != null) config.Box.ClientSecret = req.ClientSecret.Trim();
+            if (req.SharedFolderId != null) config.Box.SharedFolderId = req.SharedFolderId.Trim();
+            if (req.Domain != null) config.Box.Domain = req.Domain.Trim();
+            if (req.DeveloperToken != null) config.Box.DeveloperToken = string.IsNullOrWhiteSpace(req.DeveloperToken) ? null : req.DeveloperToken.Trim();
+            if (req.AutoUploadOnStop.HasValue) config.Box.AutoUploadOnStop = req.AutoUploadOnStop.Value;
+            if (req.BypassProxy.HasValue) config.Box.BypassProxy = req.BypassProxy.Value;
+
+            configService.SaveConfig(config);
+            return Results.Ok(new { success = true, message = "Box設定を保存しました。" });
+        });
+
+        // API: 画面キャプチャ設定の保存
+        app.MapPost("/api/config/screen", (ConfigService configService, ScreenConfigSaveRequest req) =>
+        {
+            var config = configService.LoadConfig();
+            config.Screen ??= new ScreenConfig();
+
+            if (req.CheckIntervalSec.HasValue)
+            {
+                config.Screen.CheckIntervalMs = Math.Max(1000, req.CheckIntervalSec.Value * 1000);
+            }
+            else if (req.CheckIntervalMs.HasValue)
+            {
+                config.Screen.CheckIntervalMs = Math.Max(1000, req.CheckIntervalMs.Value);
+            }
+
+            if (req.MaxIntervalSec.HasValue) config.Screen.MaxIntervalSec = Math.Max(0, req.MaxIntervalSec.Value);
+            if (!string.IsNullOrWhiteSpace(req.DiffAlgorithm)) config.Screen.DiffAlgorithm = req.DiffAlgorithm;
+            if (req.PhashThreshold.HasValue) config.Screen.PhashThreshold = Math.Max(1, req.PhashThreshold.Value);
+            if (req.MinIntervalSec.HasValue) config.Screen.MinIntervalSec = Math.Max(1, req.MinIntervalSec.Value);
+            if (req.JpegQuality.HasValue) config.Screen.JpegQuality = Math.Clamp(req.JpegQuality.Value, 10, 100);
+            if (req.DebounceStabilityMs.HasValue) config.Screen.DebounceStabilityMs = Math.Max(0, req.DebounceStabilityMs.Value);
+
+            configService.SaveConfig(config);
+            return Results.Ok(new { success = true, message = "画面キャプチャ設定を保存しました。" });
+        });
+
         // API: Box 認証状態・テーマ情報取得
         app.MapGet("/api/box/status", (BoxService boxService) =>
         {
@@ -1237,3 +1281,22 @@ public record AiChatRequest(string SessionId, string Message);
 public record PipelineStepRequest(string SessionId, string Step, bool AutoFollow = true);
 
 public record PromptSaveRequest(string Prompt);
+
+public record BoxConfigSaveRequest(
+    string? ClientId = null,
+    string? ClientSecret = null,
+    string? SharedFolderId = null,
+    string? Domain = null,
+    string? DeveloperToken = null,
+    bool? AutoUploadOnStop = null,
+    bool? BypassProxy = null);
+
+public record ScreenConfigSaveRequest(
+    int? CheckIntervalSec = null,
+    int? CheckIntervalMs = null,
+    int? MaxIntervalSec = null,
+    string? DiffAlgorithm = null,
+    int? PhashThreshold = null,
+    int? MinIntervalSec = null,
+    int? JpegQuality = null,
+    int? DebounceStabilityMs = null);

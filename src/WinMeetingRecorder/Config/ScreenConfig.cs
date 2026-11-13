@@ -16,6 +16,15 @@ public class ScreenConfig
     public int CheckIntervalMs { get; set; } = 5000;
 
     /// <summary>
+    /// 画面監視周期秒数 (CheckIntervalMs と連動)
+    /// </summary>
+    public int CheckIntervalSec
+    {
+        get => Math.Max(1, (int)Math.Round((double)CheckIntervalMs / 1000));
+        set => CheckIntervalMs = Math.Max(1000, value * 1000);
+    }
+
+    /// <summary>
     /// 画面変化がない場合の定期キーフレーム保存間隔秒数 (0で無効化。デフォルト 0)
     /// </summary>
     public int MaxIntervalSec { get; set; } = 0;

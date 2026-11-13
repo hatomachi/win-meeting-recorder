@@ -669,9 +669,14 @@ public static class IndexHtml
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(req)
         });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`HTTP ${res.status}: ${errText}`);
+        }
         const data = await res.json();
         boxStatusResult.textContent = '✅ 設定を保存しました。';
         boxStatusResult.className = 'text-[11px] text-emerald-400 mt-1';
+        await loadConfig();
         await loadBoxStatus();
         await loadThemes();
       } catch (err) {
@@ -701,9 +706,14 @@ public static class IndexHtml
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(req)
         });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`HTTP ${res.status}: ${errText}`);
+        }
         const data = await res.json();
-        screenStatusResult.textContent = '✅ 画面キャプチャ設定を保存しました。';
+        screenStatusResult.textContent = '✅ 画面キャプチャ設定を保存しました。次回録音開始時から反映されます。';
         screenStatusResult.className = 'text-[11px] text-emerald-400 mt-1';
+        await loadConfig();
       } catch (err) {
         screenStatusResult.textContent = '❌ 保存エラー: ' + err.message;
         screenStatusResult.className = 'text-[11px] text-rose-400 mt-1';
@@ -727,7 +737,8 @@ public static class IndexHtml
           boxBypassProxy.checked = cfg.box.bypassProxy ?? false;
         }
         if (cfg.screen) {
-          screenCheckIntervalSec.value = cfg.screen.checkIntervalSec ?? 5;
+          const sec = cfg.screen.checkIntervalSec ?? Math.round((cfg.screen.checkIntervalMs || 5000) / 1000);
+          screenCheckIntervalSec.value = Math.max(1, sec);
           screenMaxIntervalSec.value = cfg.screen.maxIntervalSec ?? 0;
           screenDiffAlgorithm.value = cfg.screen.diffAlgorithm || 'phash';
           screenPhashThreshold.value = cfg.screen.phashThreshold ?? 5;
