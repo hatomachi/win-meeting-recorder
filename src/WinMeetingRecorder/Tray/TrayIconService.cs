@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WinMeetingRecorder.Audio;
 using WinMeetingRecorder.Box;
+using WinMeetingRecorder.Ui;
 using WinMeetingRecorder.Workflow;
 
 namespace WinMeetingRecorder.Tray;
@@ -167,7 +168,7 @@ public class TrayIconService : IDisposable
             Enabled = false
         };
 
-        _openWebItem = new ToolStripMenuItem("🌐 操作盤を開く (Web UI: localhost:5000)", null, (s, e) =>
+        _openWebItem = new ToolStripMenuItem("🌐 操作盤を開く (専用ウィンドウ)", null, (s, e) =>
         {
             OpenWebUi();
         });
@@ -639,14 +640,7 @@ public class TrayIconService : IDisposable
 
     private static void OpenWebUi()
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo("http://localhost:5000") { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Tray] ブラウザ起動エラー: {ex.Message}");
-        }
+        AppWindowLauncher.Open("http://localhost:5000");
     }
 
     public void Dispose()

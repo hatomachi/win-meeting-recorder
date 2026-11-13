@@ -1223,18 +1223,10 @@ public static class Program
             await app.StopAsync();
         });
 
-        // 起動時に既定ブラウザを自動オープン
+        // 起動時に専用アプリウィンドウ (Edge/Chrome --app モード) を自動オープン
         if (!noBrowser)
         {
-            try
-            {
-                Process.Start(new ProcessStartInfo("http://localhost:5000") { UseShellExecute = true });
-                Console.WriteLine("[Program] 🌐 既定ブラウザで http://localhost:5000 を自動起動しました。");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Program] ⚠️ ブラウザ自動起動スキップ: {ex.Message}");
-            }
+            AppWindowLauncher.Open("http://localhost:5000");
         }
 
         // STA メッセージループの開始 (タスクトレイ常駐)
