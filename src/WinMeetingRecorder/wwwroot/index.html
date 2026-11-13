@@ -519,9 +519,19 @@
         data.screens.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s.index;
-          opt.textContent = s.isPrimary ? `画面${s.index + 1} (${s.width}x${s.height}) ★主` : `画面${s.index + 1} (${s.width}x${s.height})`;
+          const w = (s.bounds && s.bounds.width) || s.width || 0;
+          const h = (s.bounds && s.bounds.height) || s.height || 0;
+          opt.textContent = s.isPrimary ? `画面${s.index + 1} (${w}x${h}) ★主` : `画面${s.index + 1} (${w}x${h})`;
           screenSelect.appendChild(opt);
         });
+        if (data.virtualDesktop) {
+          const vOpt = document.createElement('option');
+          vOpt.value = "-1";
+          const vw = (data.virtualDesktop.bounds && data.virtualDesktop.bounds.width) || 0;
+          const vh = (data.virtualDesktop.bounds && data.virtualDesktop.bounds.height) || 0;
+          vOpt.textContent = `全画面結合 (${vw}x${vh})`;
+          screenSelect.appendChild(vOpt);
+        }
       } catch (err) {
         console.error('画面一覧取得エラー:', err);
       }

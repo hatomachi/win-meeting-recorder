@@ -20,7 +20,7 @@ echo "🔨 [2/3] Windows 実機上でローカル高速ビルド中 (dotnet publ
 ssh $WIN_HOST "Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; C:\dotnet\dotnet.exe publish C:\work\src\WinMeetingRecorder\WinMeetingRecorder.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o C:\work"
 
 echo "🔄 [3/3] 新バイナリを再起動中..."
-ssh $WIN_HOST "schtasks /create /tn 'StartRecorder' /tr 'C:\work\WinMeetingRecorder.exe --no-browser' /sc once /st '23:59' /ru 'sohik' /it /f; schtasks /run /tn 'StartRecorder'; Start-Sleep -Seconds 2; schtasks /delete /tn 'StartRecorder' /f; if (!(Get-Process WinMeetingRecorder -ErrorAction SilentlyContinue)) { Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='C:\work\WinMeetingRecorder.exe --no-browser'} | Out-Null; Start-Sleep -Seconds 2 }"
+ssh $WIN_HOST "schtasks /create /tn 'StartRecorder' /tr 'C:\work\WinMeetingRecorder.exe --no-browser' /sc once /st '23:59' /ru 'dev' /rp 'DevPass123!' /f; schtasks /run /tn 'StartRecorder'; Start-Sleep -Seconds 2; schtasks /delete /tn 'StartRecorder' /f; if (!(Get-Process WinMeetingRecorder -ErrorAction SilentlyContinue)) { Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='C:\work\WinMeetingRecorder.exe --no-browser'} | Out-Null; Start-Sleep -Seconds 2 }"
 
 echo "✅ デプロイ完了！"
 echo "Web UI URL: http://192.168.11.17:5000"
