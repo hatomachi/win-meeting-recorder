@@ -857,9 +857,9 @@ public class BoxService
         var appConfig = _configService.LoadConfig();
         var boxConfig = appConfig.Box;
 
-        // テーマの特定
+        // テーマの特定 (明示指定 > メタデータ永続化テーマ > 設定ファイルの既定選択)
         var themes = await GetThemesAsync();
-        var themeId = specifiedThemeId ?? boxConfig.SelectedThemeId;
+        var themeId = specifiedThemeId ?? metadata?.ThemeId ?? boxConfig.SelectedThemeId;
         var theme = themes.FirstOrDefault(t => t.Id == themeId) ?? themes.FirstOrDefault();
 
         if (theme == null || string.IsNullOrWhiteSpace(theme.BoxFolderId))

@@ -137,7 +137,13 @@ public class RecordingWorkflowService
         lock (_lock)
         {
             _selectedThemeId = themeId;
-            Console.WriteLine($"[Workflow] 録音セッションの選択テーマを更新しました: {themeId}");
+            var boxConfig = _configService.LoadConfig().Box;
+            var themeName = boxConfig.Themes.FirstOrDefault(t => t.Id == themeId)?.Name;
+            if (_activeSession != null)
+            {
+                _spoolService.UpdateSessionTheme(_activeSession.SpoolDirectory, themeId, themeName);
+            }
+            Console.WriteLine($"[Workflow] 録音セッションの選択テーマを更新しました: {themeId} ({themeName})");
         }
     }
 
@@ -321,11 +327,13 @@ public class RecordingWorkflowService
             int monitorIdx = options?.MonitorIndex ?? 0;
             var screenInfo = ScreenService.ResolveScreen(monitorIdx);
 
-            _selectedThemeId = options?.ThemeId ?? _configService.LoadConfig().Box.SelectedThemeId;
+            var boxConfig = _configService.LoadConfig().Box;
+            _selectedThemeId = options?.ThemeId ?? boxConfig.SelectedThemeId;
+            var themeName = boxConfig.Themes.FirstOrDefault(t => t.Id == _selectedThemeId)?.Name;
             _currentMemo = string.IsNullOrWhiteSpace(options?.Memo) ? null : options.Memo.Trim();
 
-            // スプールディレクトリとメタデータの初期化
-            var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name, _currentMemo);
+            // スプールディレクトリとメタデータの初期化 (テーマも永続化)
+            var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name, _currentMemo, _selectedThemeId, themeName);
             _activeSession = new ActiveSessionState(session.SessionId, session.SpoolDirectory);
             _recordStartTime = DateTime.Now;
             _silenceWarningNotified = false;
@@ -365,9 +373,9 @@ public class RecordingWorkflowService
 
                 UpdateProgress("recording", "記録中", 0);
 
-                var themeName = _configService.LoadConfig().Box.Themes.FirstOrDefault(t => t.Id == _selectedThemeId)?.Name ?? _selectedThemeId ?? "既定";
+                string displayThemeName = themeName ?? _selectedThemeId ?? "既定";
                 var memoInfo = !string.IsNullOrWhiteSpace(_currentMemo) ? $" [メモ: {_currentMemo}]" : "";
-                AppLogger.Info($"🎙️ 会議記録を開始しました (テーマ: {themeName}{memoInfo} / セッション: {session.SessionId})");
+                AppLogger.Info($"🎙️ 会議記録を開始しました (テーマ: {displayThemeName}{memoInfo} / セッション: {session.SessionId})");
                 RecordingStarted?.Invoke(session.SessionId);
 
                 return Task.FromResult(new RecordingStartResult(
@@ -589,10 +597,10 @@ public class RecordingWorkflowService
 
             var appConfig = _configService.LoadConfig();
 
-            // 3. テーマの解決 (明示指定 > セッション最新選択 > 設定ファイルの既定)
+            // 3. テーマの解決 (明示指定 > メタデータ永続化テーマ > セッション最新選択 > 設定ファイルの既定)
             string? effectiveThemeId = !string.IsNullOrWhiteSpace(overrideThemeId) 
                 ? overrideThemeId 
-                : (_selectedThemeId ?? appConfig.Box.SelectedThemeId);
+                : (metadata?.ThemeId ?? _selectedThemeId ?? appConfig.Box.SelectedThemeId);
 
             // 4. Box アップロード判定
             bool shouldUpload = autoUpload ?? appConfig.Box.AutoUploadOnStop;

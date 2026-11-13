@@ -36,7 +36,7 @@ public class SpoolService
     /// <summary>
     /// 新規会議セッションを初期化し、スプールディレクトリを作成します
     /// </summary>
-    public MeetingSessionMetadata CreateSession(int monitorIndex = 0, string? monitorName = null, string? memo = null)
+    public MeetingSessionMetadata CreateSession(int monitorIndex = 0, string? monitorName = null, string? memo = null, string? themeId = null, string? themeName = null)
     {
         lock (_lock)
         {
@@ -51,6 +51,8 @@ public class SpoolService
                 SessionId = sessionId,
                 SpoolDirectory = sessionDir,
                 Memo = memo,
+                ThemeId = themeId,
+                ThemeName = themeName,
                 StartTime = now,
                 MonitorIndex = monitorIndex,
                 MonitorName = monitorName
@@ -300,6 +302,8 @@ public class SpoolService
                 SessionId = dirInfo.Name,
                 DirectoryPath = subDir,
                 Memo = meta?.Memo,
+                ThemeId = meta?.ThemeId,
+                ThemeName = meta?.ThemeName,
                 CreatedAt = meta?.StartTime ?? dirInfo.CreationTime,
                 ScreenshotCount = meta?.Images.Count ?? 0,
                 HasAudio = meta?.HasAudio ?? File.Exists(Path.Combine(subDir, "meeting_audio.wav")),
@@ -325,6 +329,26 @@ public class SpoolService
             if (metadata == null) return false;
 
             metadata.Memo = string.IsNullOrWhiteSpace(memo) ? null : memo.Trim();
+            SaveMetadata(metadata);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// セッションのテーマ（保存先フォルダ）を更新・保存します
+    /// </summary>
+    public bool UpdateSessionTheme(string sessionDirOrId, string? themeId, string? themeName = null)
+    {
+        lock (_lock)
+        {
+            var metadata = GetSessionMetadata(sessionDirOrId);
+            if (metadata == null) return false;
+
+            metadata.ThemeId = string.IsNullOrWhiteSpace(themeId) ? null : themeId.Trim();
+            if (!string.IsNullOrWhiteSpace(themeName))
+            {
+                metadata.ThemeName = themeName.Trim();
+            }
             SaveMetadata(metadata);
             return true;
         }

@@ -8,333 +8,335 @@ public static class IndexHtml
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WinMeetingRecorder - Box連携</title>
+  <title>WinMeetingRecorder - 会議記録クライアント</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-start py-8 px-4 font-sans">
-  <div class="w-full max-w-2xl bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-6 md:p-8 space-y-6">
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-start py-6 px-4 font-sans select-none">
+  <div class="w-full max-w-2xl bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-5 md:p-6 space-y-4">
     
-    <!-- ヘッダー -->
-    <div class="flex items-center justify-between border-b border-slate-700 pb-4">
-      <div class="flex items-center space-x-3">
-        <span class="text-3xl">🎙️</span>
+    <!-- 1. ヘッダー -->
+    <div class="flex items-center justify-between pb-2 border-b border-slate-700/80">
+      <div class="flex items-center space-x-2.5">
+        <span class="text-2xl">🎙️</span>
         <div>
-          <h1 class="text-xl font-bold tracking-tight">WinMeetingRecorder</h1>
-          <p class="text-xs text-slate-400">Box API 自動連携・軽量会議記録クライアント</p>
+          <h1 class="text-base font-bold tracking-tight text-white flex items-center space-x-2">
+            <span>WinMeetingRecorder</span>
+            <span id="boxAuthBadge" class="text-[10px] font-normal px-2 py-0.5 rounded bg-slate-800 text-slate-400">確認中...</span>
+          </h1>
         </div>
       </div>
       <div class="flex items-center space-x-2">
-        <div id="statusBadge" class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-          待機中
-        </div>
-        <button id="shutdownBtn" title="アプリを終了" class="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800/80 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 transition flex items-center space-x-1">
-          <span>✕</span>
-          <span>終了</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Box 認証ステータス ＆ 会議テーマ選択バー -->
-    <div class="bg-slate-950/60 border border-slate-700/80 rounded-xl p-4 space-y-3">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-2 text-xs">
-          <span class="text-slate-400">Box認証状態:</span>
-          <span id="boxAuthBadge" class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-400">確認中...</span>
-        </div>
         <button id="boxLoginQuickBtn" class="hidden px-2.5 py-1 rounded text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center space-x-1">
           <span>🌐</span>
-          <span>Boxにログイン</span>
+          <span>Boxログイン</span>
+        </button>
+        <button id="openSettingsBtn" title="詳細設定を開く" class="p-1.5 rounded-lg bg-slate-700/60 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center">
+          <span class="text-sm">⚙️</span>
+        </button>
+        <button id="shutdownBtn" title="アプリを終了" class="p-1.5 rounded-lg bg-slate-700/60 hover:bg-rose-900/60 text-slate-400 hover:text-rose-200 transition flex items-center">
+          <span class="text-sm">✕</span>
         </button>
       </div>
+    </div>
 
-      <div>
-        <div class="flex items-center justify-between mb-1">
-          <label class="block text-xs font-semibold text-slate-300">📋 会議テーマ選択 (Box保存先フォルダ)</label>
-          <button id="refreshThemesBtn" title="exeと同フォルダのconfig.jsonからテーマ設定を再読み込み" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center space-x-1">
-            <span>🔄</span>
-            <span>設定再読込</span>
+    <!-- 2. 【現在の会議】カード (待機中 / 録音中) -->
+    <div id="currentSessionCard" class="bg-slate-900/70 border border-slate-700/80 rounded-xl p-4 space-y-3 shadow-inner">
+      
+      <!-- 行1: ステータス・タイマー ＆ テーマ2連スイッチ ＆ 記録開始/停止ボタン -->
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        
+        <!-- 左: ステータス ＆ タイマー -->
+        <div class="flex items-center space-x-2">
+          <div id="statusBadge" class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5">
+            <span id="recordBtnIcon" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span id="timerText">待機中</span>
+          </div>
+        </div>
+
+        <!-- 中央: 保存先テーマ 2択セグメントスイッチ (インライン) -->
+        <div class="flex items-center space-x-1">
+          <div id="themeSegmentContainer" class="inline-flex rounded-lg bg-slate-950 p-0.5 border border-slate-700/80">
+            <!-- JSで動的生成: 例 [ 👥 社員限定 ] [ 🌐 全体共有 ] -->
+            <button class="px-2.5 py-1 rounded-md text-xs font-medium text-slate-400">テーマ読込中...</button>
+          </div>
+          <select id="themeSelect" class="hidden"></select>
+        </div>
+
+        <!-- 右: 記録アクションボタン (開始/停止 ＆ 手動スクショ) -->
+        <div class="flex items-center space-x-1.5">
+          <button id="screenshotBtn" disabled title="即座に画面キャプチャ" class="hidden px-2.5 py-1.5 rounded-lg font-medium text-xs bg-slate-800 text-slate-500 transition cursor-not-allowed">
+            <span>📸</span>
           </button>
-        </div>
-        <select id="themeSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-          <option value="">テーマ読み込み中...</option>
-        </select>
-        <p id="themeInfo" class="text-[10px] text-slate-500 mt-1">選択されたテーマのBoxフォルダへ自動アップロードされます（exeと同フォルダのconfig.jsonで設定）。</p>
-      </div>
-    </div>
-
-    <!-- デバイス・画面選択 -->
-    <div class="space-y-3">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">🔊 スピーカー (相手の声 / Loopback)</label>
-          <select id="playbackSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-            <option value="">既定の再生デバイス</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">🎤 マイク (自分の声)</label>
-          <select id="captureSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-            <option value="">既定のマイクデバイス</option>
-          </select>
-        </div>
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-slate-300 mb-1">🖥️ 対象ディスプレイ (スライド変化自動検知)</label>
-        <select id="screenSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-          <option value="0">プライマリディスプレイ (既定)</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- メイン操作パネル -->
-    <div class="bg-slate-900/50 border border-slate-700/60 rounded-xl p-5 space-y-4">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-3">
-          <button id="recordBtn" class="px-5 py-2.5 rounded-xl font-bold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 transition flex items-center space-x-2">
-            <span id="recordBtnIcon" class="w-3 h-3 rounded-full bg-white animate-pulse"></span>
+          <button id="recordBtn" class="px-4 py-1.5 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition flex items-center space-x-1.5">
+            <span class="w-2 h-2 rounded-full bg-white"></span>
             <span id="recordBtnText">記録開始</span>
           </button>
-          <button id="screenshotBtn" disabled class="px-4 py-2.5 rounded-xl font-medium text-xs bg-slate-700 text-slate-400 transition flex items-center space-x-1 cursor-not-allowed">
-            <span>📸</span>
-            <span>即座に撮影</span>
-          </button>
-        </div>
-        <div class="text-right">
-          <div id="timerText" class="text-xl font-mono font-bold text-slate-300">00:00:00</div>
-          <div id="shotCountText" class="text-[11px] text-slate-400">撮影: 0 枚</div>
         </div>
       </div>
 
-      <!-- リアルタイム音量インジケーター -->
-      <div>
-        <div class="flex justify-between text-[10px] text-slate-400 mb-1">
-          <span>マイク・相手の声 入力レベル</span>
-          <span id="audioLevelText">0%</span>
-        </div>
-        <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
-          <div id="audioLevelBar" class="bg-emerald-500 h-2 rounded-full transition-all duration-100" style="width: 0%"></div>
+      <!-- 行2: 会議メモ (1行・任意) -->
+      <div class="relative">
+        <div class="flex items-center space-x-2 bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1.5 focus-within:border-indigo-500 transition">
+          <span class="text-xs text-slate-400">📝</span>
+          <input 
+            type="text" 
+            id="meetingMemoInput" 
+            placeholder="会議メモ / 件名 (例: ○○定例、△△さん1on1 等・空欄でもOK)" 
+            class="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-500 focus:outline-none"
+          />
+          <span id="memoSaveStatus" class="text-[10px] text-emerald-400 opacity-0 transition-opacity">保存済 ✓</span>
         </div>
       </div>
 
-      <!-- 会議メモ入力 (1行・任意) -->
-      <div class="pt-1 border-t border-slate-800/80">
-        <div class="flex items-center justify-between text-[11px] text-slate-400 mb-1">
-          <label for="meetingMemoInput" class="flex items-center space-x-1 font-medium">
-            <span>📝</span>
-            <span>会議メモ / 件名 (1行・任意)</span>
-          </label>
-          <span id="memoSaveStatus" class="text-[10px] text-emerald-400 opacity-0 transition-opacity">自動保存済み ✓</span>
+      <!-- 行3: Zoom風インラインデバイスピル ＆ 音量メーター -->
+      <div class="flex items-center justify-between text-xs pt-1 border-t border-slate-800/80 gap-2 flex-wrap">
+        
+        <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+          <!-- マイク ピル (音量メーター付き) -->
+          <div class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
+            <span class="text-xs mr-1.5">🎤</span>
+            <!-- リアルタイム音量ミニインジケーター (4本バー) -->
+            <div class="flex items-end space-x-0.5 h-3 mr-1.5" title="マイク入力レベル">
+              <span id="vBar1" class="w-0.5 h-1 bg-slate-700 rounded-full transition-all duration-75"></span>
+              <span id="vBar2" class="w-0.5 h-2 bg-slate-700 rounded-full transition-all duration-75"></span>
+              <span id="vBar3" class="w-0.5 h-2.5 bg-slate-700 rounded-full transition-all duration-75"></span>
+              <span id="vBar4" class="w-0.5 h-3 bg-slate-700 rounded-full transition-all duration-75"></span>
+            </div>
+            <select id="captureSelect" class="bg-transparent text-[11px] text-slate-300 font-medium focus:outline-none cursor-pointer pr-4 appearance-none">
+              <option value="">既定のマイク</option>
+            </select>
+            <span class="absolute right-1.5 text-[9px] text-slate-500 pointer-events-none">▾</span>
+          </div>
+
+          <!-- スピーカー ピル -->
+          <div class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
+            <span class="text-xs mr-1">🔊</span>
+            <select id="playbackSelect" class="bg-transparent text-[11px] text-slate-300 font-medium focus:outline-none cursor-pointer pr-4 appearance-none">
+              <option value="">既定の再生デバイス</option>
+            </select>
+            <span class="absolute right-1.5 text-[9px] text-slate-500 pointer-events-none">▾</span>
+          </div>
+
+          <!-- 画面 ピル -->
+          <div class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
+            <span class="text-xs mr-1">🖥️</span>
+            <select id="screenSelect" class="bg-transparent text-[11px] text-slate-300 font-medium focus:outline-none cursor-pointer pr-4 appearance-none">
+              <option value="0">プライマリディスプレイ</option>
+            </select>
+            <span class="absolute right-1.5 text-[9px] text-slate-500 pointer-events-none">▾</span>
+          </div>
         </div>
-        <input 
-          type="text" 
-          id="meetingMemoInput" 
-          placeholder="例: ○○定例、△△さん1on1 等 (空欄でもOK)" 
-          class="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition" 
-        />
-        <p class="text-[10px] text-slate-500 mt-1">※ 打合せ前・中いつでも入力可能。空欄でも保存・送信できます。</p>
+
+        <!-- 右端: 撮影枚数 (録音中) -->
+        <div class="flex items-center space-x-2 text-[11px] text-slate-400">
+          <span id="shotCountText" class="font-mono">撮影: 0 枚</span>
+        </div>
       </div>
 
-      <!-- 4重保護ガード・ヘルスモニター表示 -->
-      <div id="healthGuardBar" class="hidden pt-1 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-        <div class="flex items-center space-x-2 text-emerald-400" id="healthStatusLabel">
-          <span>🛡️</span>
-          <span>自動復旧ガード稼働中 (スリープ抑止: ON / デバイス切断自動再接続)</span>
-        </div>
-        <div id="healthDeviceSummary" class="text-[10px] text-slate-400 font-mono truncate max-w-xs"></div>
-      </div>
-      <div id="healthWarningBanner" class="hidden bg-amber-950/70 border border-amber-500/50 rounded-lg px-3 py-2 text-xs text-amber-300 flex items-center space-x-2">
-        <span>⚠️</span>
-        <span id="healthWarningText">注意メッセージ</span>
+      <!-- 隠し互換用 (既存スクリプト・ヘルスモニター用) -->
+      <div class="hidden">
+        <div id="audioLevelBar"></div>
+        <div id="audioLevelText">0%</div>
+        <button id="refreshThemesBtn"></button>
+        <div id="healthGuardBar"></div>
+        <div id="healthStatusLabel"></div>
+        <div id="healthDeviceSummary"></div>
+        <div id="healthWarningBanner"></div>
+        <div id="healthWarningText"></div>
       </div>
     </div>
 
-    <!-- Box アップロード進捗表示エリア (停止後表示) -->
-    <div id="uploadProgressContainer" class="hidden bg-slate-950/80 border border-blue-500/40 rounded-xl p-4 space-y-3">
-      <div class="flex items-center justify-between">
+    <!-- 3. アップロード進捗表示エリア (停止後インライン表示) -->
+    <div id="uploadProgressContainer" class="hidden bg-slate-950/90 border border-blue-500/40 rounded-xl p-3.5 space-y-2">
+      <div class="flex items-center justify-between text-xs">
         <div class="flex items-center space-x-2">
           <span class="animate-spin text-blue-400">🔄</span>
-          <span id="uploadStatusText" class="text-xs font-semibold text-blue-300">Boxへアップロード準備中...</span>
+          <span id="uploadStatusText" class="font-semibold text-blue-300">Boxへアップロード準備中...</span>
         </div>
-        <span id="uploadCountBadge" class="text-[11px] px-2 py-0.5 rounded bg-blue-900/50 text-blue-300 font-mono">0/0</span>
+        <span id="uploadCountBadge" class="text-[10px] px-2 py-0.5 rounded bg-blue-900/50 text-blue-300 font-mono">0%</span>
       </div>
-      <div class="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-700">
-        <div id="uploadProgressBar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-200" style="width: 0%"></div>
+      <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-700">
+        <div id="uploadProgressBar" class="bg-blue-500 h-2 rounded-full transition-all duration-200" style="width: 0%"></div>
       </div>
-      <div id="uploadSuccessMessage" class="hidden text-xs text-emerald-400 flex items-center justify-between pt-1">
+      <div id="uploadSuccessMessage" class="hidden text-xs text-emerald-400 flex items-center justify-between pt-0.5">
         <span>✅ BoxへのZIPアップロードが完了しました！</span>
-        <a id="boxFolderLink" href="#" target="_blank" class="text-indigo-400 hover:underline flex items-center space-x-1">
+        <a id="boxFolderLink" href="#" target="_blank" class="text-indigo-400 hover:underline flex items-center space-x-1 font-semibold">
           <span>Boxで確認</span>
           <span>↗</span>
         </a>
       </div>
     </div>
 
-    <!-- 設定アコーディオン: Box 連携設定 -->
-    <div class="border border-slate-700 rounded-xl bg-slate-950/40 overflow-hidden">
-      <button id="toggleBoxConfigBtn" class="w-full px-4 py-2.5 text-left text-xs font-semibold text-slate-300 flex items-center justify-between hover:bg-slate-800/50 transition">
-        <span class="flex items-center space-x-2">
-          <span>📦</span>
-          <span>Box API 連携設定</span>
-          <span id="boxConfigSummaryBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400">未認証</span>
-        </span>
-        <span id="boxConfigArrow" class="text-xs transition-transform transform duration-200">▼</span>
-      </button>
-
-      <div id="boxConfigSection" class="hidden p-4 border-t border-slate-800 space-y-3 text-xs">
-        <div>
-          <label class="block text-slate-400 mb-1">Box Client ID</label>
-          <input type="text" id="boxClientId" placeholder="Box Developer Console の Client ID" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-        </div>
-        <div>
-          <label class="block text-slate-400 mb-1">Box Client Secret</label>
-          <div class="relative">
-            <input type="password" id="boxClientSecret" placeholder="Box Developer Console の Client Secret" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500 pr-16">
-            <button type="button" id="toggleSecretVisibility" class="absolute right-2 top-1.5 text-[11px] text-slate-400 hover:text-slate-200">表示</button>
-          </div>
-        </div>
-        <div>
-          <label class="block text-slate-400 mb-1">既定フォールバックBoxフォルダID (任意)</label>
-          <input type="text" id="boxSharedFolderId" placeholder="例: 433029580764 (URL末尾の数字)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-          <p class="text-[10px] text-slate-500 mt-1">※ 会議テーマ（社員限定・全体共有など）ごとのBox IDは exeと同フォルダの <code>config.json</code> で設定・編集します。</p>
-        </div>
-        <div>
-          <label class="block text-slate-400 mb-1">企業・独自ドメイン (任意・SSOログイン用)</label>
-          <input type="text" id="boxDomain" placeholder="例: mycompany.app.box.com または mycompany (未設定時は標準)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-        </div>
-        <div>
-          <label class="block text-slate-400 mb-1">Developer Token (開発テスト用・任意)</label>
-          <div class="relative">
-            <input type="password" id="boxDevToken" placeholder="一時テスト用トークン (OAuth未完了時の検証用)" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500 pr-16">
-            <button type="button" id="toggleDevTokenVisibility" class="absolute right-2 top-1.5 text-[11px] text-slate-400 hover:text-slate-200">表示</button>
-          </div>
-        </div>
-        <div class="flex items-center space-x-2 pt-1">
-          <label class="flex items-center space-x-1.5 cursor-pointer">
-            <input type="checkbox" id="boxAutoUpload" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-            <span class="text-slate-300">停止時にBoxへZIP自動アップロード＆スプール消去</span>
-          </label>
-        </div>
-        <div class="flex items-center space-x-2">
-          <label class="flex items-center space-x-1.5 cursor-pointer">
-            <input type="checkbox" id="boxBypassProxy" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-            <span class="text-slate-400 text-xs">プロキシをバイパスして直接接続 (※通常はオフのまま標準プロキシ経由でOK)</span>
-          </label>
-        </div>
-        <div class="flex space-x-2 pt-2">
-          <button id="startBoxLoginBtn" class="flex-1 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium transition flex items-center justify-center space-x-1">
-            <span>🌐</span>
-            <span>ブラウザでBoxログイン</span>
-          </button>
-          <button id="saveBoxConfigBtn" class="flex-1 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition">
-            <span>💾 設定を保存</span>
-          </button>
-        </div>
-        <div id="boxStatusResult" class="text-[11px] min-h-[1rem] break-all text-slate-400"></div>
-      </div>
-    </div>
-
-    <!-- 設定アコーディオン: 画面キャプチャ＆差分検知設定 -->
-    <div class="border border-slate-700 rounded-xl bg-slate-950/40 overflow-hidden">
-      <button id="toggleScreenConfigBtn" class="w-full px-4 py-2.5 text-left text-xs font-semibold text-slate-300 flex items-center justify-between hover:bg-slate-800/50 transition">
-        <span class="flex items-center space-x-2">
-          <span>📸</span>
-          <span>画面キャプチャ＆差分検知設定</span>
-          <span id="screenConfigSummaryBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400">pHash 5s</span>
-        </span>
-        <span id="screenConfigArrow" class="text-xs transition-transform transform duration-200">▼</span>
-      </button>
-
-      <div id="screenConfigSection" class="hidden p-4 border-t border-slate-800 space-y-3 text-xs">
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-slate-400 mb-1">画面チェック周期 (秒)</label>
-            <input type="number" id="screenCheckIntervalSec" min="1" max="60" value="5" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[10px] text-slate-500">監視間隔 (推奨: 5秒)</span>
-          </div>
-          <div>
-            <label class="block text-slate-400 mb-1">定期強制保存 (秒)</label>
-            <input type="number" id="screenMaxIntervalSec" min="0" max="600" value="0" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[10px] text-slate-500">0で無効 (変化時のみ撮影)</span>
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-slate-400 mb-1">差分検知アルゴリズム</label>
-          <select id="screenDiffAlgorithm" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <option value="phash">pHash 8x8 DCT (推奨・過剰撮影防止・スライド変化検知)</option>
-            <option value="hybrid">Hybrid (輝度差＋面積比率・旧方式)</option>
-          </select>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-slate-400 mb-1">pHash ハミング距離閾値</label>
-            <input type="number" id="screenPhashThreshold" min="1" max="64" value="5" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[10px] text-slate-500">この値を超える変化で撮影 (推奨: 5)</span>
-          </div>
-          <div>
-            <label class="block text-slate-400 mb-1">最小クールダウン (秒)</label>
-            <input type="number" id="screenMinIntervalSec" min="1" max="30" value="2" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[10px] text-slate-500">連続撮影防止 (推奨: 2秒)</span>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-slate-400 mb-1">JPEG保存品質 (%)</label>
-            <input type="number" id="screenJpegQuality" min="10" max="100" value="80" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[10px] text-slate-500">画質とファイルサイズ (推奨: 80)</span>
-          </div>
-          <div>
-            <label class="block text-slate-400 mb-1">デバウンス安定待ち (ms)</label>
-            <input type="number" id="screenDebounceMs" min="0" max="2000" step="100" value="500" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[10px] text-slate-500">めくりアニメ完了待ち (推奨: 500ms)</span>
-          </div>
-        </div>
-
-        <div class="pt-2">
-          <button id="saveScreenConfigBtn" class="w-full py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition flex items-center justify-center space-x-1">
-            <span>💾 画面設定を保存</span>
-          </button>
-        </div>
-        <div id="screenStatusResult" class="text-[11px] min-h-[1rem] break-all text-slate-400"></div>
-      </div>
-    </div>
-
-    <!-- 未送信スプール一覧 (失敗時リカバリ) -->
-    <div id="pendingSpoolArea" class="border border-slate-700/60 rounded-xl bg-slate-950/20 p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
+    <!-- 4. 未送信スプール一覧 (0件時は完全非表示) -->
+    <div id="pendingSpoolArea" class="hidden border border-amber-500/40 rounded-xl bg-amber-950/20 p-3 space-y-2.5">
+      <div class="flex items-center justify-between text-xs">
+        <span class="font-semibold text-amber-300 flex items-center space-x-1.5">
           <span>📁</span>
-          <span>未送信スプール一覧</span>
+          <span id="pendingTitle">未送信スプール</span>
         </span>
-        <button id="refreshPendingBtn" class="text-[11px] text-slate-400 hover:text-slate-200">🔄 更新</button>
+        <button id="refreshPendingBtn" class="text-[11px] text-slate-400 hover:text-slate-200 flex items-center space-x-1">
+          <span>🔄</span>
+          <span>更新</span>
+        </button>
       </div>
-      <div id="pendingList" class="space-y-1.5 max-h-40 overflow-y-auto text-xs text-slate-400">
-        <div class="text-[11px] text-slate-500">未送信のスプールはありません。</div>
+      <div id="pendingList" class="space-y-2 max-h-56 overflow-y-auto"></div>
+    </div>
+
+    <!-- 5. 動作ログステータスバー ＆ ワンクリック展開コンソール (案1) -->
+    <div class="border border-slate-700/70 rounded-xl bg-slate-950/40 overflow-hidden text-xs">
+      <!-- 1行ステータスバー (折りたたみ時) -->
+      <div id="logStatusBar" class="px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 transition cursor-pointer select-none">
+        <div class="flex items-center space-x-2 truncate mr-2 flex-1">
+          <span class="text-slate-400">📜</span>
+          <span id="latestLogSummary" class="text-[11px] text-slate-400 truncate">ログ取得中...</span>
+        </div>
+        <button id="toggleLogBtn" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center space-x-1 font-medium shrink-0">
+          <span id="toggleLogText">展開</span>
+          <span id="toggleLogArrow">▼</span>
+        </button>
+      </div>
+
+      <!-- 展開コンソール本体 (デフォルト非表示) -->
+      <div id="logExpandedArea" class="hidden border-t border-slate-800 p-3 space-y-2 bg-slate-950/90">
+        <div class="flex items-center justify-between text-[11px] text-slate-400 pb-1 border-b border-slate-800/80">
+          <div class="flex items-center space-x-2">
+            <span class="font-semibold text-slate-300">動作ログ ＆ Box格納履歴</span>
+          </div>
+          <div class="flex items-center space-x-3">
+            <label class="flex items-center space-x-1 cursor-pointer select-none">
+              <input type="checkbox" id="autoScrollLogs" checked class="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0">
+              <span>追従</span>
+            </label>
+            <button id="refreshLogsBtn" class="hover:text-slate-200">🔄 更新</button>
+            <button id="clearLogsBtn" class="hover:text-rose-300">🗑️ クリア</button>
+          </div>
+        </div>
+        <div id="logConsole" class="w-full h-44 font-mono text-[11px] leading-relaxed overflow-y-auto space-y-1 text-slate-300 select-text p-1">
+          <div class="text-slate-500 text-[10px]">ログ取得中...</div>
+        </div>
       </div>
     </div>
 
-    <!-- 動作ログ ＆ Box格納履歴ビュー -->
-    <div class="border border-slate-700/60 rounded-xl bg-slate-950/20 p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
-          <span>📜</span>
-          <span>動作ログ ＆ Box格納履歴</span>
-        </span>
-        <div class="flex items-center space-x-3 text-[11px] text-slate-400">
-          <label class="flex items-center space-x-1 cursor-pointer select-none">
-            <input type="checkbox" id="autoScrollLogs" checked class="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0">
-            <span>最下部追従</span>
-          </label>
-          <button id="refreshLogsBtn" class="hover:text-slate-200">🔄 更新</button>
-          <button id="clearLogsBtn" class="hover:text-rose-300">🗑️ クリア</button>
+    <!-- 6. ⚙️ 設定モーダル (普段は非表示) -->
+    <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+        
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+          <h2 class="text-sm font-bold text-white flex items-center space-x-2">
+            <span>⚙️</span>
+            <span>詳細設定 (Box連携 ＆ 画面キャプチャ)</span>
+          </h2>
+          <button id="closeSettingsBtn" class="text-slate-400 hover:text-white text-lg p-1">✕</button>
         </div>
+
+        <!-- Box 連携設定 -->
+        <div class="border border-slate-800 rounded-xl bg-slate-950/50 p-3.5 space-y-2.5 text-xs">
+          <h3 class="font-semibold text-slate-300 flex items-center space-x-1.5">
+            <span>📦</span>
+            <span>Box API 連携設定</span>
+          </h3>
+          <div class="space-y-2">
+            <div>
+              <label class="block text-slate-400 text-[11px] mb-0.5">Box Client ID</label>
+              <input type="text" id="boxClientId" placeholder="Client ID" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+            <div>
+              <label class="block text-slate-400 text-[11px] mb-0.5">Box Client Secret</label>
+              <div class="relative">
+                <input type="password" id="boxClientSecret" placeholder="Client Secret" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200 pr-14">
+                <button type="button" id="toggleSecretVisibility" class="absolute right-2 top-1 text-[10px] text-slate-400 hover:text-slate-200">表示</button>
+              </div>
+            </div>
+            <div>
+              <label class="block text-slate-400 text-[11px] mb-0.5">企業・独自ドメイン (任意・SSO認可画面用)</label>
+              <input type="text" id="boxDomain" placeholder="例: mycompany" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+            <div>
+              <label class="block text-slate-400 text-[11px] mb-0.5">既定フォールバックBoxフォルダID (任意)</label>
+              <input type="text" id="boxSharedFolderId" placeholder="テーマ設定外の予備ID" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+              <p class="text-[10px] text-slate-500 mt-0.5">※ テーマ（社員限定・全体共有等）のフォルダIDは exe同フォルダの config.json で設定します。</p>
+            </div>
+            <div>
+              <label class="block text-slate-400 text-[11px] mb-0.5">Developer Token (一時テスト用・任意)</label>
+              <div class="relative">
+                <input type="password" id="boxDevToken" placeholder="一時テスト用トークン" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200 pr-14">
+                <button type="button" id="toggleDevTokenVisibility" class="absolute right-2 top-1 text-[10px] text-slate-400 hover:text-slate-200">表示</button>
+              </div>
+            </div>
+            <div class="flex items-center space-x-2 pt-1">
+              <label class="flex items-center space-x-1.5 cursor-pointer">
+                <input type="checkbox" id="boxAutoUpload" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                <span class="text-slate-300 text-[11px]">停止時にBoxへ自動ZIP送信＆スプール消去</span>
+              </label>
+            </div>
+            <div class="flex items-center space-x-2">
+              <label class="flex items-center space-x-1.5 cursor-pointer">
+                <input type="checkbox" id="boxBypassProxy" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                <span class="text-slate-400 text-[11px]">プロキシをバイパスして直接接続</span>
+              </label>
+            </div>
+            <div class="flex space-x-2 pt-1.5">
+              <button id="startBoxLoginBtn" class="flex-1 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium transition text-xs">
+                🌐 ブラウザでBoxログイン
+              </button>
+              <button id="saveBoxConfigBtn" class="flex-1 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition text-xs">
+                💾 設定保存
+              </button>
+            </div>
+            <div id="boxStatusResult" class="text-[10px] min-h-[1rem] break-all text-slate-400"></div>
+          </div>
+        </div>
+
+        <!-- 画面キャプチャ設定 -->
+        <div class="border border-slate-800 rounded-xl bg-slate-950/50 p-3.5 space-y-2.5 text-xs">
+          <h3 class="font-semibold text-slate-300 flex items-center space-x-1.5">
+            <span>📸</span>
+            <span>画面キャプチャ＆差分検知設定</span>
+          </h3>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div>
+              <label class="block text-slate-400 mb-0.5">監視周期 (秒)</label>
+              <input type="number" id="screenCheckIntervalSec" min="1" max="60" value="5" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-0.5">定期強制保存 (秒, 0で無効)</label>
+              <input type="number" id="screenMaxIntervalSec" min="0" max="600" value="0" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+          </div>
+          <div>
+            <label class="block text-slate-400 text-[11px] mb-0.5">差分アルゴリズム</label>
+            <select id="screenDiffAlgorithm" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200">
+              <option value="phash">pHash 8x8 DCT (推奨・過剰撮影防止・スライド変化検知)</option>
+              <option value="hybrid">Hybrid (輝度差＋面積比率)</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div>
+              <label class="block text-slate-400 mb-0.5">pHashハミング距離閾値</label>
+              <input type="number" id="screenPhashThreshold" min="1" max="64" value="5" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-0.5">最小クールダウン (秒)</label>
+              <input type="number" id="screenMinIntervalSec" min="1" max="30" value="2" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div>
+              <label class="block text-slate-400 mb-0.5">JPEG品質 (%)</label>
+              <input type="number" id="screenJpegQuality" min="10" max="100" value="80" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-0.5">デバウンス安定待ち (ms)</label>
+              <input type="number" id="screenDebounceMs" min="0" max="2000" step="100" value="500" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200">
+            </div>
+          </div>
+          <button id="saveScreenConfigBtn" class="w-full py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition text-xs mt-1">
+            💾 画面設定保存
+          </button>
+          <div id="screenStatusResult" class="text-[10px] min-h-[1rem] break-all text-slate-400"></div>
+        </div>
+
       </div>
-      <div id="logConsole" class="w-full h-52 bg-slate-950/90 rounded-lg border border-slate-800 p-2.5 font-mono text-[11px] leading-relaxed overflow-y-auto space-y-1 text-slate-300 select-text">
-        <div class="text-slate-500 text-[10px]">ログ取得中...</div>
-      </div>
-      <p class="text-[10px] text-slate-500">※ 上にスクロールすると、本日格納された会議やBoxフォルダリンク（🔗）を確認できます。</p>
     </div>
 
   </div>
@@ -352,20 +354,27 @@ public static class IndexHtml
     const screenshotBtn = document.getElementById('screenshotBtn');
     const timerText = document.getElementById('timerText');
     const shotCountText = document.getElementById('shotCountText');
-    const audioLevelBar = document.getElementById('audioLevelBar');
-    const audioLevelText = document.getElementById('audioLevelText');
     const meetingMemoInput = document.getElementById('meetingMemoInput');
     const memoSaveStatus = document.getElementById('memoSaveStatus');
 
-    // Box UI
+    // Zoom風 音量インジケーター (4本バー)
+    const vBar1 = document.getElementById('vBar1');
+    const vBar2 = document.getElementById('vBar2');
+    const vBar3 = document.getElementById('vBar3');
+    const vBar4 = document.getElementById('vBar4');
+
+    // Box UI & テーマ
     const boxAuthBadge = document.getElementById('boxAuthBadge');
     const boxLoginQuickBtn = document.getElementById('boxLoginQuickBtn');
     const themeSelect = document.getElementById('themeSelect');
-    const refreshThemesBtn = document.getElementById('refreshThemesBtn');
-    const toggleBoxConfigBtn = document.getElementById('toggleBoxConfigBtn');
-    const boxConfigSection = document.getElementById('boxConfigSection');
-    const boxConfigArrow = document.getElementById('boxConfigArrow');
-    const boxConfigSummaryBadge = document.getElementById('boxConfigSummaryBadge');
+    const themeSegmentContainer = document.getElementById('themeSegmentContainer');
+    let cachedThemes = [];
+    let currentSelectedThemeId = null;
+
+    // 設定モーダル
+    const openSettingsBtn = document.getElementById('openSettingsBtn');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    const settingsModal = document.getElementById('settingsModal');
     const boxClientId = document.getElementById('boxClientId');
     const boxClientSecret = document.getElementById('boxClientSecret');
     const boxSharedFolderId = document.getElementById('boxSharedFolderId');
@@ -380,10 +389,6 @@ public static class IndexHtml
     const toggleDevTokenVisibility = document.getElementById('toggleDevTokenVisibility');
 
     // 画面キャプチャ設定 UI
-    const toggleScreenConfigBtn = document.getElementById('toggleScreenConfigBtn');
-    const screenConfigSection = document.getElementById('screenConfigSection');
-    const screenConfigArrow = document.getElementById('screenConfigArrow');
-    const screenConfigSummaryBadge = document.getElementById('screenConfigSummaryBadge');
     const screenCheckIntervalSec = document.getElementById('screenCheckIntervalSec');
     const screenMaxIntervalSec = document.getElementById('screenMaxIntervalSec');
     const screenDiffAlgorithm = document.getElementById('screenDiffAlgorithm');
@@ -402,11 +407,19 @@ public static class IndexHtml
     const uploadSuccessMessage = document.getElementById('uploadSuccessMessage');
     const boxFolderLink = document.getElementById('boxFolderLink');
 
-    // 未送信スプール
+    // 未送信スプール UI
+    const pendingSpoolArea = document.getElementById('pendingSpoolArea');
+    const pendingTitle = document.getElementById('pendingTitle');
     const pendingList = document.getElementById('pendingList');
     const refreshPendingBtn = document.getElementById('refreshPendingBtn');
 
-    // ログ UI
+    // ログ UI (案1: 1行バー ＆ 展開)
+    const logStatusBar = document.getElementById('logStatusBar');
+    const latestLogSummary = document.getElementById('latestLogSummary');
+    const toggleLogBtn = document.getElementById('toggleLogBtn');
+    const toggleLogText = document.getElementById('toggleLogText');
+    const toggleLogArrow = document.getElementById('toggleLogArrow');
+    const logExpandedArea = document.getElementById('logExpandedArea');
     const logConsole = document.getElementById('logConsole');
     const autoScrollLogs = document.getElementById('autoScrollLogs');
     const refreshLogsBtn = document.getElementById('refreshLogsBtn');
@@ -417,27 +430,43 @@ public static class IndexHtml
     let timerInterval = null;
     let startTime = null;
 
-    // アコーディオン開閉
-    toggleBoxConfigBtn.addEventListener('click', () => {
-      const isHidden = boxConfigSection.classList.contains('hidden');
-      if (isHidden) {
-        boxConfigSection.classList.remove('hidden');
-        boxConfigArrow.style.transform = 'rotate(180deg)';
-      } else {
-        boxConfigSection.classList.add('hidden');
-        boxConfigArrow.style.transform = 'rotate(0deg)';
+    // 設定モーダルの開閉
+    openSettingsBtn.addEventListener('click', () => {
+      settingsModal.classList.remove('hidden');
+    });
+    closeSettingsBtn.addEventListener('click', () => {
+      settingsModal.classList.add('hidden');
+    });
+    settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) {
+        settingsModal.classList.add('hidden');
       }
     });
 
-    toggleScreenConfigBtn.addEventListener('click', () => {
-      const isHidden = screenConfigSection.classList.contains('hidden');
+    // ログ開閉トグル (案1)
+    function toggleLogView() {
+      const isHidden = logExpandedArea.classList.contains('hidden');
       if (isHidden) {
-        screenConfigSection.classList.remove('hidden');
-        screenConfigArrow.style.transform = 'rotate(180deg)';
+        logExpandedArea.classList.remove('hidden');
+        toggleLogText.textContent = '閉じる';
+        toggleLogArrow.textContent = '▲';
+        if (autoScrollLogs.checked) {
+          logConsole.scrollTop = logConsole.scrollHeight;
+        }
       } else {
-        screenConfigSection.classList.add('hidden');
-        screenConfigArrow.style.transform = 'rotate(0deg)';
+        logExpandedArea.classList.add('hidden');
+        toggleLogText.textContent = '展開';
+        toggleLogArrow.textContent = '▼';
       }
+    }
+    logStatusBar.addEventListener('click', (e) => {
+      // リンククリック時はトグルしない
+      if (e.target.tagName === 'A') return;
+      toggleLogView();
+    });
+    toggleLogBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleLogView();
     });
 
     toggleSecretVisibility.addEventListener('click', () => {
@@ -455,6 +484,7 @@ public static class IndexHtml
       await loadDevices();
       await loadScreens();
       await loadConfig();
+      await loadThemes();
       await loadBoxStatus();
       await loadPendingSessions();
       await loadLogs();
@@ -494,225 +524,213 @@ public static class IndexHtml
         data.screens.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s.index;
-          opt.textContent = `[${s.index}] ${s.name} (${s.bounds.width}x${s.bounds.height}) ${s.isPrimary ? '★' : ''}`;
+          opt.textContent = s.isPrimary ? `画面${s.index + 1} (${s.width}x${s.height}) ★主` : `画面${s.index + 1} (${s.width}x${s.height})`;
           screenSelect.appendChild(opt);
         });
-        if (data.virtualDesktop) {
-          const vOpt = document.createElement('option');
-          vOpt.value = "-1";
-          vOpt.textContent = `[-1] ${data.virtualDesktop.name} (${data.virtualDesktop.bounds.width}x${data.virtualDesktop.bounds.height})`;
-          screenSelect.appendChild(vOpt);
-        }
       } catch (err) {
         console.error('画面一覧取得エラー:', err);
       }
     }
 
+    // Box 認証ステータス
+    async function loadBoxStatus() {
+      try {
+        const res = await fetch('/api/box/status');
+        const data = await res.json();
+        if (data.isAuthenticated) {
+          boxAuthBadge.className = 'text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+          boxAuthBadge.textContent = 'Box認証済 ✓';
+          boxLoginQuickBtn.classList.add('hidden');
+        } else {
+          boxAuthBadge.className = 'text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30';
+          boxAuthBadge.textContent = 'Box未認証';
+          boxLoginQuickBtn.classList.remove('hidden');
+        }
+      } catch (err) {
+        boxAuthBadge.className = 'text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30';
+        boxAuthBadge.textContent = 'Box確認失敗';
+      }
+    }
+
+    // テーマ一覧読み込み ＆ インライン2連スイッチ描画
+    async function loadThemes(forceRefresh = false) {
+      try {
+        const url = forceRefresh ? '/api/box/themes/refresh' : '/api/box/themes';
+        const res = await (forceRefresh ? fetch(url, { method: 'POST' }) : fetch(url));
+        const themes = await res.json();
+        cachedThemes = themes || [];
+
+        const statusRes = await fetch('/api/box/status');
+        const status = await statusRes.json();
+        currentSelectedThemeId = status.selectedThemeId || (cachedThemes[0] ? cachedThemes[0].id : null);
+
+        renderThemeSegment();
+      } catch (err) {
+        console.error('テーマ一覧取得エラー:', err);
+      }
+    }
+
+    // テーマ選択セグメントスイッチの描画
+    function renderThemeSegment() {
+      themeSegmentContainer.innerHTML = '';
+      if (!cachedThemes || cachedThemes.length === 0) {
+        themeSegmentContainer.innerHTML = '<span class="text-[11px] text-slate-500 px-2 py-1">テーマなし</span>';
+        return;
+      }
+
+      cachedThemes.forEach(t => {
+        const btn = document.createElement('button');
+        const isSelected = t.id === currentSelectedThemeId;
+        const icon = t.name.includes('社員') ? '👥 ' : (t.name.includes('全体') ? '🌐 ' : '📁 ');
+        btn.innerHTML = `<span>${icon}</span><span>${escapeHtml(t.name)}</span>`;
+        btn.className = isSelected 
+          ? 'px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-600 text-white shadow-sm transition' 
+          : 'px-2.5 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-900 transition';
+        
+        btn.addEventListener('click', async () => {
+          if (currentSelectedThemeId === t.id) return;
+          currentSelectedThemeId = t.id;
+          renderThemeSegment();
+          try {
+            await fetch('/api/box/theme/select', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ themeId: t.id })
+            });
+            setTimeout(loadLogs, 300);
+          } catch (err) {
+            console.error('テーマ切替エラー:', err);
+          }
+        });
+
+        themeSegmentContainer.appendChild(btn);
+      });
+    }
+
+    boxLoginQuickBtn.addEventListener('click', async () => {
+      try {
+        boxLoginQuickBtn.disabled = true;
+        boxLoginQuickBtn.innerHTML = '<span>⏳</span><span>認可画面へ...</span>';
+        const res = await fetch('/api/box/login', { method: 'POST' });
+        const data = await res.json();
+        if (data.authUrl) {
+          window.open(data.authUrl, '_blank');
+        }
+      } catch (err) {
+        alert('ログイン開始エラー: ' + err.message);
+      } finally {
+        boxLoginQuickBtn.disabled = false;
+        boxLoginQuickBtn.innerHTML = '<span>🌐</span><span>Boxログイン</span>';
+      }
+    });
+
+    startBoxLoginBtn.addEventListener('click', async () => {
+      try {
+        startBoxLoginBtn.disabled = true;
+        startBoxLoginBtn.textContent = '認可画面を開いています...';
+        const res = await fetch('/api/box/login', { method: 'POST' });
+        const data = await res.json();
+        if (data.authUrl) {
+          window.open(data.authUrl, '_blank');
+        }
+      } catch (err) {
+        alert('ログイン開始エラー: ' + err.message);
+      } finally {
+        startBoxLoginBtn.disabled = false;
+        startBoxLoginBtn.textContent = '🌐 ブラウザでBoxログイン';
+      }
+    });
+
+    saveBoxConfigBtn.addEventListener('click', async () => {
+      try {
+        saveBoxConfigBtn.disabled = true;
+        saveBoxConfigBtn.textContent = '保存中...';
+        const req = {
+          clientId: boxClientId.value.trim(),
+          clientSecret: boxClientSecret.value.trim(),
+          sharedFolderId: boxSharedFolderId.value.trim(),
+          domain: boxDomain.value.trim() || null,
+          developerToken: boxDevToken.value.trim() || null,
+          autoUploadOnStop: boxAutoUpload.checked,
+          bypassProxy: boxBypassProxy.checked
+        };
+        const res = await fetch('/api/config/box', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(req)
+        });
+        const data = await res.json();
+        boxStatusResult.textContent = '✅ 設定を保存しました。';
+        boxStatusResult.className = 'text-[11px] text-emerald-400 mt-1';
+        await loadBoxStatus();
+        await loadThemes();
+      } catch (err) {
+        boxStatusResult.textContent = '❌ 保存エラー: ' + err.message;
+        boxStatusResult.className = 'text-[11px] text-rose-400 mt-1';
+      } finally {
+        saveBoxConfigBtn.disabled = false;
+        saveBoxConfigBtn.textContent = '💾 設定保存';
+      }
+    });
+
+    saveScreenConfigBtn.addEventListener('click', async () => {
+      try {
+        saveScreenConfigBtn.disabled = true;
+        saveScreenConfigBtn.textContent = '保存中...';
+        const req = {
+          checkIntervalSec: parseInt(screenCheckIntervalSec.value, 10) || 5,
+          maxIntervalSec: parseInt(screenMaxIntervalSec.value, 10) || 0,
+          diffAlgorithm: screenDiffAlgorithm.value || 'phash',
+          phashThreshold: parseInt(screenPhashThreshold.value, 10) || 5,
+          minIntervalSec: parseInt(screenMinIntervalSec.value, 10) || 2,
+          jpegQuality: parseInt(screenJpegQuality.value, 10) || 80,
+          debounceStabilityMs: parseInt(screenDebounceMs.value, 10) || 500
+        };
+        const res = await fetch('/api/config/screen', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(req)
+        });
+        const data = await res.json();
+        screenStatusResult.textContent = '✅ 画面キャプチャ設定を保存しました。';
+        screenStatusResult.className = 'text-[11px] text-emerald-400 mt-1';
+      } catch (err) {
+        screenStatusResult.textContent = '❌ 保存エラー: ' + err.message;
+        screenStatusResult.className = 'text-[11px] text-rose-400 mt-1';
+      } finally {
+        saveScreenConfigBtn.disabled = false;
+        saveScreenConfigBtn.textContent = '💾 画面設定保存';
+      }
+    });
+
     async function loadConfig() {
       try {
         const res = await fetch('/api/config');
         const cfg = await res.json();
-        if (cfg && cfg.screen) {
-          screenCheckIntervalSec.value = Math.max(1, Math.round((cfg.screen.checkIntervalMs || 5000) / 1000));
+        if (cfg.box) {
+          boxClientId.value = cfg.box.clientId || '';
+          boxClientSecret.value = cfg.box.clientSecret || '';
+          boxSharedFolderId.value = cfg.box.sharedFolderId || '';
+          boxDomain.value = cfg.box.domain || '';
+          boxDevToken.value = cfg.box.developerToken || '';
+          boxAutoUpload.checked = cfg.box.autoUploadOnStop ?? true;
+          boxBypassProxy.checked = cfg.box.bypassProxy ?? false;
+        }
+        if (cfg.screen) {
+          screenCheckIntervalSec.value = cfg.screen.checkIntervalSec ?? 5;
           screenMaxIntervalSec.value = cfg.screen.maxIntervalSec ?? 0;
           screenDiffAlgorithm.value = cfg.screen.diffAlgorithm || 'phash';
           screenPhashThreshold.value = cfg.screen.phashThreshold ?? 5;
           screenMinIntervalSec.value = cfg.screen.minIntervalSec ?? 2;
           screenJpegQuality.value = cfg.screen.jpegQuality ?? 80;
           screenDebounceMs.value = cfg.screen.debounceStabilityMs ?? 500;
-
-          const algoLabel = cfg.screen.diffAlgorithm === 'hybrid' ? 'Hybrid' : 'pHash';
-          const intervalSec = Math.round((cfg.screen.checkIntervalMs || 5000) / 1000);
-          screenConfigSummaryBadge.textContent = `${algoLabel} ${intervalSec}s`;
-        }
-
-        if (cfg && cfg.box) {
-          boxClientId.value = cfg.box.clientId || '';
-          boxClientSecret.value = cfg.box.clientSecret || '';
-          boxSharedFolderId.value = cfg.box.sharedFolderId || '433029580764';
-          boxDomain.value = cfg.box.domain || '';
-          boxDevToken.value = cfg.box.developerToken || '';
-          boxAutoUpload.checked = cfg.box.autoUploadOnStop !== false;
-          boxBypassProxy.checked = cfg.box.bypassProxy === true;
         }
       } catch (err) {
-        console.error('設定取得エラー:', err);
+        console.error('設定ロードエラー:', err);
       }
     }
 
-    async function loadBoxStatus() {
-      try {
-        const res = await fetch('/api/box/status');
-        const status = await res.json();
-
-        if (status.isAuthenticated) {
-          const name = status.userName ? `${status.userName} 様` : '認証済み';
-          boxAuthBadge.textContent = `🟢 ${name}`;
-          boxAuthBadge.className = 'px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-950 text-emerald-400 border border-emerald-800';
-          boxConfigSummaryBadge.textContent = '認証済み';
-          boxConfigSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-900/60 text-emerald-300';
-          boxLoginQuickBtn.classList.add('hidden');
-        } else {
-          boxAuthBadge.textContent = '⚪ 未認証';
-          boxAuthBadge.className = 'px-2 py-0.5 rounded text-[11px] font-medium bg-rose-950 text-rose-300 border border-rose-800';
-          boxConfigSummaryBadge.textContent = '未認証';
-          boxConfigSummaryBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-rose-900/60 text-rose-300';
-          boxLoginQuickBtn.classList.remove('hidden');
-        }
-
-        await loadThemes();
-      } catch (err) {
-        console.error('Boxステータス取得エラー:', err);
-      }
-    }
-
-    async function loadThemes(forceRefresh = false) {
-      try {
-        const url = forceRefresh ? '/api/box/themes/refresh' : '/api/box/themes';
-        const method = forceRefresh ? 'POST' : 'GET';
-        const res = await fetch(url, { method });
-        const data = await res.json();
-        const themes = Array.isArray(data) ? data : (data.themes || []);
-
-        themeSelect.innerHTML = '';
-        if (themes.length === 0) {
-          themeSelect.innerHTML = '<option value="">(テーマがありません)</option>';
-          return;
-        }
-
-        const statusRes = await fetch('/api/box/status');
-        const status = await statusRes.json();
-        const activeId = status.activeThemeId;
-
-        themes.forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = t.id;
-          const folderId = t.box_id || t.box_folder_id || '(未設定)';
-          opt.textContent = `${t.name} (Box ID: ${folderId})`;
-          if (t.id === activeId) opt.selected = true;
-          themeSelect.appendChild(opt);
-        });
-      } catch (err) {
-        console.error('テーマ取得エラー:', err);
-      }
-    }
-
-    // テーマ選択変更
-    themeSelect.addEventListener('change', async () => {
-      const selectedId = themeSelect.value;
-      if (!selectedId) return;
-      try {
-        await fetch('/api/box/theme/select', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ themeId: selectedId })
-        });
-      } catch (err) {
-        console.error('テーマ選択エラー:', err);
-      }
-    });
-
-    refreshThemesBtn.addEventListener('click', async () => {
-      refreshThemesBtn.disabled = true;
-      refreshThemesBtn.innerHTML = '<span>🔄</span><span>読込中...</span>';
-      await loadThemes(true);
-      refreshThemesBtn.disabled = false;
-      refreshThemesBtn.innerHTML = '<span>🔄</span><span>設定再読込</span>';
-    });
-
-    // Box ログインボタン (Quick & Settings)
-    async function triggerBoxLogin() {
-      boxStatusResult.textContent = 'ブラウザでBox認可画面を起動しています...';
-      boxStatusResult.className = 'text-[11px] text-blue-400';
-      try {
-        // 設定を事前に保存
-        await saveBoxConfig();
-        const res = await fetch('/api/box/login', { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-          boxStatusResult.textContent = '✅ Box認証に成功しました！';
-          boxStatusResult.className = 'text-[11px] text-emerald-400';
-          await loadBoxStatus();
-        } else {
-          boxStatusResult.textContent = `❌ ${data.message || '認証エラー'}`;
-          boxStatusResult.className = 'text-[11px] text-rose-400';
-        }
-      } catch (err) {
-        boxStatusResult.textContent = `❌ 通信エラー: ${err.message}`;
-        boxStatusResult.className = 'text-[11px] text-rose-400';
-      }
-    }
-
-    boxLoginQuickBtn.addEventListener('click', triggerBoxLogin);
-    startBoxLoginBtn.addEventListener('click', triggerBoxLogin);
-
-    // 設定保存
-    async function saveBoxConfig() {
-      const cfgRes = await fetch('/api/config');
-      const cfg = await cfgRes.json();
-      cfg.box = cfg.box || {};
-      cfg.box.clientId = boxClientId.value.trim();
-      cfg.box.clientSecret = boxClientSecret.value.trim();
-      cfg.box.sharedFolderId = boxSharedFolderId.value.trim() || '433029580764';
-      cfg.box.domain = boxDomain.value.trim();
-      cfg.box.developerToken = boxDevToken.value.trim();
-      cfg.box.autoUploadOnStop = boxAutoUpload.checked;
-      cfg.box.bypassProxy = boxBypassProxy.checked;
-
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cfg)
-      });
-      return await res.json();
-    }
-
-    saveBoxConfigBtn.addEventListener('click', async () => {
-      try {
-        await saveBoxConfig();
-        boxStatusResult.textContent = '💾 設定を保存しました。';
-        boxStatusResult.className = 'text-[11px] text-emerald-400';
-        await loadBoxStatus();
-      } catch (err) {
-        boxStatusResult.textContent = `❌ 保存エラー: ${err.message}`;
-        boxStatusResult.className = 'text-[11px] text-rose-400';
-      }
-    });
-
-    // 画面キャプチャ設定保存
-    async function saveScreenConfig() {
-      const cfgRes = await fetch('/api/config');
-      const cfg = await cfgRes.json();
-      cfg.screen = cfg.screen || {};
-      cfg.screen.checkIntervalMs = Math.max(1000, parseInt(screenCheckIntervalSec.value, 10) * 1000);
-      cfg.screen.maxIntervalSec = Math.max(0, parseInt(screenMaxIntervalSec.value, 10));
-      cfg.screen.diffAlgorithm = screenDiffAlgorithm.value;
-      cfg.screen.phashThreshold = Math.max(1, parseInt(screenPhashThreshold.value, 10));
-      cfg.screen.minIntervalSec = Math.max(1, parseInt(screenMinIntervalSec.value, 10));
-      cfg.screen.jpegQuality = Math.min(100, Math.max(10, parseInt(screenJpegQuality.value, 10)));
-      cfg.screen.debounceStabilityMs = Math.max(0, parseInt(screenDebounceMs.value, 10));
-
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cfg)
-      });
-      return await res.json();
-    }
-
-    saveScreenConfigBtn.addEventListener('click', async () => {
-      try {
-        await saveScreenConfig();
-        screenStatusResult.textContent = '💾 画面キャプチャ設定を保存しました。次回録音開始時から反映されます。';
-        screenStatusResult.className = 'text-[11px] text-emerald-400';
-        await loadConfig();
-      } catch (err) {
-        screenStatusResult.textContent = `❌ 保存エラー: ${err.message}`;
-        screenStatusResult.className = 'text-[11px] text-rose-400';
-      }
-    });
-
-    // 記録開始 / 停止
+    // 録音開始 / 停止
     recordBtn.addEventListener('click', async () => {
       if (!isRecording) {
         await startRecording();
@@ -722,103 +740,95 @@ public static class IndexHtml
     });
 
     async function startRecording() {
-      recordBtn.disabled = true;
-      try {
-        const currentMemoVal = meetingMemoInput.value.trim();
-        const body = {
-          playbackDeviceId: playbackSelect.value || null,
-          captureDeviceId: captureSelect.value || null,
-          monitorIndex: parseInt(screenSelect.value, 10),
-          enableScreenCapture: true,
-          themeId: themeSelect.value || null,
-          memo: currentMemoVal || null
-        };
+      const playbackId = playbackSelect.value || null;
+      const captureId = captureSelect.value || null;
+      const monitorIndex = parseInt(screenSelect.value, 10) || 0;
+      const memo = meetingMemoInput.value.trim() || null;
 
+      recordBtn.disabled = true;
+      recordBtnText.textContent = '準備中...';
+
+      try {
         const res = await fetch('/api/record/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify({
+            playbackDeviceId: playbackId,
+            captureDeviceId: captureId,
+            monitorIndex: monitorIndex,
+            enableScreenCapture: true,
+            themeId: currentSelectedThemeId,
+            memo: memo
+          })
         });
-
         const data = await res.json();
-        if (res.ok) {
+        if (data.success) {
           isRecording = true;
-          updateRecordingUI(true);
+          recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-slate-700 hover:bg-slate-600 text-white shadow-md transition flex items-center space-x-1.5';
+          recordBtnIcon.className = 'w-2 h-2 rounded-sm bg-rose-400';
+          recordBtnText.textContent = '記録停止';
+          screenshotBtn.disabled = false;
+          screenshotBtn.classList.remove('hidden');
+          screenshotBtn.classList.remove('cursor-not-allowed', 'text-slate-500');
+          screenshotBtn.classList.add('bg-slate-700', 'text-slate-200', 'hover:bg-slate-600');
+
+          statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center space-x-1.5 animate-pulse';
+
+          startTime = Date.now();
+          startTimer();
           uploadProgressContainer.classList.add('hidden');
         } else {
-          alert(`開始エラー: ${data.error || '不明なエラー'}`);
+          alert('開始エラー: ' + data.error);
         }
       } catch (err) {
-        alert(`開始通信エラー: ${err.message}`);
+        alert('通信エラー: ' + err.message);
       } finally {
         recordBtn.disabled = false;
+        await loadLogs();
       }
     }
 
     async function stopRecording() {
-      const selectedOption = themeSelect.options[themeSelect.selectedIndex];
-      const currentThemeName = selectedOption ? selectedOption.text : '未設定';
-      const currentThemeId = themeSelect.value || null;
-      const currentMemoVal = meetingMemoInput.value.trim();
-      const memoText = currentMemoVal ? `\n📝 メモ: 【${currentMemoVal}】` : '';
-
-      const confirmMsg =
-        `会議記録を停止し、Boxへアップロードしますか？\n` +
-        `${memoText}\n\n` +
-        `📁 保存先テーマ: 【${currentThemeName}】\n\n` +
-        `・[OK]: このテーマで停止し、Boxへ自動アップロードします。\n` +
-        `・[キャンセル]: アップロードを保留し、ローカルに保管します。\n` +
-        `  (テーマを変更して下の『未送信スプール』からBox送信するか、次の録音をすぐに開始できます)`;
-
-      const doUpload = confirm(confirmMsg);
-
-      // 1. 即座にタイマー停止＆ボタン無効化
-      if (timerInterval) {
-        clearInterval(timerInterval);
-        timerInterval = null;
-      }
-      isRecording = false;
       recordBtn.disabled = true;
-      recordBtnText.textContent = '停止・保存中...';
-      statusBadge.textContent = '⏹️ 保存処理中';
-      statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30';
-      screenshotBtn.disabled = true;
-      screenshotBtn.className = 'px-4 py-2.5 rounded-xl font-medium text-xs bg-slate-700 text-slate-400 transition flex items-center space-x-1 cursor-not-allowed';
+      recordBtnText.textContent = '停止中...';
+
+      uploadProgressContainer.classList.remove('hidden');
+      uploadSuccessMessage.classList.add('hidden');
+      uploadStatusText.textContent = 'BoxへZIP圧縮・アップロード準備中...';
+      uploadCountBadge.textContent = '処理中';
+      uploadProgressBar.style.width = '20%';
+      uploadProgressBar.className = 'bg-blue-600 h-2 rounded-full transition-all duration-300';
+
+      const memo = meetingMemoInput.value.trim() || null;
 
       try {
-        uploadProgressContainer.classList.remove('hidden');
-        uploadStatusText.textContent = 'WAV音声をMP3へ高圧縮中...';
-        uploadCountBadge.textContent = '処理中';
-        uploadProgressBar.style.width = '20%';
-        uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
-        uploadSuccessMessage.classList.add('hidden');
-
         const res = await fetch('/api/record/stop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            autoUpload: doUpload,
-            themeId: currentThemeId,
-            memo: currentMemoVal || null
+            autoUpload: boxAutoUpload.checked,
+            themeId: currentSelectedThemeId,
+            memo: memo
           })
         });
         const data = await res.json();
 
-        updateRecordingUI(false);
+        isRecording = false;
+        stopTimer();
+        timerText.textContent = '待機中';
+        statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5';
+        statusBadge.classList.remove('animate-pulse');
 
-        if (res.ok) {
-          meetingMemoInput.value = '';
-          if (!doUpload) {
+        recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition flex items-center space-x-1.5';
+        recordBtnIcon.className = 'w-2 h-2 rounded-full bg-emerald-400';
+        recordBtnText.textContent = '記録開始';
+        screenshotBtn.disabled = true;
+        screenshotBtn.classList.add('hidden');
+
+        if (data.success) {
+          if (data.boxUpload && data.boxUpload.success) {
             uploadProgressBar.style.width = '100%';
-            uploadProgressBar.className = 'bg-amber-500 h-2.5 rounded-full';
-            uploadStatusText.textContent = '⏸️ アップロードを保留し、ローカルに保管しました。';
-            uploadCountBadge.textContent = '保留 (スプール保管)';
-            setTimeout(() => {
-              uploadProgressContainer.classList.add('hidden');
-            }, 6000);
-          } else if (data.boxUpload && data.boxUpload.success) {
-            uploadProgressBar.style.width = '100%';
-            uploadStatusText.textContent = '✅ BoxへのZIPアップロード完了！';
+            uploadStatusText.textContent = '✅ BoxへのZIPアップロードが完了しました！';
             uploadCountBadge.textContent = '完了';
             uploadSuccessMessage.classList.remove('hidden');
             if (data.boxUpload.folderUrl) {
@@ -826,7 +836,7 @@ public static class IndexHtml
             }
           } else if (data.boxUpload && !data.boxUpload.success) {
             uploadStatusText.textContent = `⚠️ Boxアップロードエラー: ${data.boxUpload.message}`;
-            uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+            uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
           } else {
             uploadProgressBar.style.width = '100%';
             uploadStatusText.textContent = '✅ ローカル保存が完了しました。';
@@ -834,11 +844,11 @@ public static class IndexHtml
           }
         } else {
           uploadStatusText.textContent = `❌ 停止処理エラー: ${data.error}`;
-          uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+          uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
         }
       } catch (err) {
         uploadStatusText.textContent = `❌ 通信エラー: ${err.message}`;
-        uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+        uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
       } finally {
         recordBtn.disabled = false;
         await loadPendingSessions();
@@ -862,157 +872,126 @@ public static class IndexHtml
     // 会議メモのリアルタイム同期 (入力デバウンス ＆ フォーカスアウト時)
     let memoDebounceTimer = null;
     meetingMemoInput.addEventListener('input', () => {
-      if (!isRecording) return;
       clearTimeout(memoDebounceTimer);
-      memoDebounceTimer = setTimeout(async () => {
-        try {
-          const memo = meetingMemoInput.value.trim();
-          const res = await fetch('/api/record/memo', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ memo: memo || null })
-          });
-          if (res.ok) {
-            memoSaveStatus.style.opacity = '1';
-            setTimeout(() => { memoSaveStatus.style.opacity = '0'; }, 1500);
-          }
-        } catch { /* ignore */ }
-      }, 500);
+      memoDebounceTimer = setTimeout(syncMeetingMemo, 500);
     });
+    meetingMemoInput.addEventListener('blur', syncMeetingMemo);
 
-    meetingMemoInput.addEventListener('change', async () => {
-      if (!isRecording) return;
-      clearTimeout(memoDebounceTimer);
+    async function syncMeetingMemo() {
+      const memo = meetingMemoInput.value;
       try {
-        const memo = meetingMemoInput.value.trim();
         const res = await fetch('/api/record/memo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ memo: memo || null })
+          body: JSON.stringify({ memo: memo ? memo.trim() : null })
         });
         if (res.ok) {
           memoSaveStatus.style.opacity = '1';
           setTimeout(() => { memoSaveStatus.style.opacity = '0'; }, 1500);
         }
       } catch { /* ignore */ }
-    });
+    }
 
-    function updateRecordingUI(recording) {
-      if (recording) {
-        statusBadge.textContent = '🔴 記録中';
-        statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse';
-        recordBtn.className = 'px-5 py-2.5 rounded-xl font-bold text-sm bg-slate-700 hover:bg-slate-600 text-white shadow-lg transition flex items-center space-x-2';
-        recordBtnIcon.className = 'w-3 h-3 rounded bg-white';
-        recordBtnText.textContent = '記録停止 (Box保存)';
-        screenshotBtn.disabled = false;
-        screenshotBtn.className = 'px-4 py-2.5 rounded-xl font-medium text-xs bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center space-x-1';
+    function startTimer() {
+      stopTimer();
+      timerInterval = setInterval(() => {
+        if (!startTime) return;
+        const diff = Math.floor((Date.now() - startTime) / 1000);
+        const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+        const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+        const s = String(diff % 60).padStart(2, '0');
+        timerText.textContent = `${h}:${m}:${s}`;
+      }, 500);
+    }
 
-        startTime = new Date();
-        timerInterval = setInterval(() => {
-          const diff = Math.floor((new Date() - startTime) / 1000);
-          const h = String(Math.floor(diff / 3600)).padStart(2, '0');
-          const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
-          const s = String(diff % 60).padStart(2, '0');
-          timerText.textContent = `${h}:${m}:${s}`;
-        }, 1000);
-      } else {
-        statusBadge.textContent = '待機中';
-        statusBadge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-        recordBtn.className = 'px-5 py-2.5 rounded-xl font-bold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 transition flex items-center space-x-2';
-        recordBtnIcon.className = 'w-3 h-3 rounded-full bg-white animate-pulse';
-        recordBtnText.textContent = '記録開始';
-        screenshotBtn.disabled = true;
-        screenshotBtn.className = 'px-4 py-2.5 rounded-xl font-medium text-xs bg-slate-700 text-slate-400 transition flex items-center space-x-1 cursor-not-allowed';
-
-        if (timerInterval) clearInterval(timerInterval);
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
         timerInterval = null;
-        timerText.textContent = '00:00:00';
-        document.getElementById('healthGuardBar')?.classList.add('hidden');
-        document.getElementById('healthWarningBanner')?.classList.add('hidden');
       }
     }
 
-    // ポーリング監視 (録音状態・音量レベル・トレイ同期・4重保護ガード状態)
+    // Zoom風 音量インジケーター更新 (4本バー)
+    function updateVolumeBars(levelPct) {
+      // levelPct: 0〜100
+      vBar1.className = levelPct > 4 
+        ? 'w-0.5 h-1 bg-emerald-400 rounded-full transition-all duration-75' 
+        : 'w-0.5 h-1 bg-slate-700 rounded-full transition-all duration-75';
+      vBar2.className = levelPct > 20 
+        ? 'w-0.5 h-2 bg-emerald-400 rounded-full transition-all duration-75' 
+        : 'w-0.5 h-2 bg-slate-700 rounded-full transition-all duration-75';
+      vBar3.className = levelPct > 45 
+        ? 'w-0.5 h-2.5 bg-emerald-400 rounded-full transition-all duration-75' 
+        : 'w-0.5 h-2.5 bg-slate-700 rounded-full transition-all duration-75';
+      vBar4.className = levelPct > 70 
+        ? 'w-0.5 h-3 bg-amber-400 rounded-full transition-all duration-75' 
+        : 'w-0.5 h-3 bg-slate-700 rounded-full transition-all duration-75';
+    }
+
+    // ステータスポーリング
     function startPollingStatus() {
-      const healthGuardBar = document.getElementById('healthGuardBar');
-      const healthDeviceSummary = document.getElementById('healthDeviceSummary');
-      const healthWarningBanner = document.getElementById('healthWarningBanner');
-      const healthWarningText = document.getElementById('healthWarningText');
-      let pollCount = 0;
-
       setInterval(async () => {
-        pollCount++;
-        if (pollCount % 4 === 0) {
-          loadLogs();
-        }
-
         try {
-          const res = await fetch('/api/status');
+          const res = await fetch('/api/record/status');
           if (!res.ok) return;
           const data = await res.json();
-
-          // 音量バー更新
-          const lvl = Math.min(100, Math.round((data.audioLevel || 0) * 100));
-          audioLevelBar.style.width = `${lvl}%`;
-          audioLevelText.textContent = `${lvl}%`;
-
-          // トレイ等からの外部トリガー検知同期
+          
           if (data.isRecording && !isRecording) {
             isRecording = true;
-            updateRecordingUI(true);
+            recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-slate-700 hover:bg-slate-600 text-white shadow-md transition flex items-center space-x-1.5';
+            recordBtnIcon.className = 'w-2 h-2 rounded-sm bg-rose-400';
+            recordBtnText.textContent = '記録停止';
+            screenshotBtn.disabled = false;
+            screenshotBtn.classList.remove('hidden');
+            screenshotBtn.classList.remove('cursor-not-allowed', 'text-slate-500');
+            screenshotBtn.classList.add('bg-slate-700', 'text-slate-200', 'hover:bg-slate-600');
+
+            statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center space-x-1.5 animate-pulse';
+
+            if (data.elapsedSeconds) {
+              startTime = Date.now() - (data.elapsedSeconds * 1000);
+            } else if (!startTime) {
+              startTime = Date.now();
+            }
+            startTimer();
           } else if (!data.isRecording && isRecording) {
             isRecording = false;
-            updateRecordingUI(false);
+            stopTimer();
+            timerText.textContent = '待機中';
+            statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5';
+            statusBadge.classList.remove('animate-pulse');
+
+            recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition flex items-center space-x-1.5';
+            recordBtnIcon.className = 'w-2 h-2 rounded-full bg-emerald-400';
+            recordBtnText.textContent = '記録開始';
+            screenshotBtn.disabled = true;
+            screenshotBtn.classList.add('hidden');
           }
 
-          if (data.isRecording && data.capturedCount !== undefined) {
-            shotCountText.textContent = `撮影: ${data.capturedCount} 枚`;
-          }
-
-          if (data.isRecording && data.memo !== undefined && document.activeElement !== meetingMemoInput) {
-            meetingMemoInput.value = data.memo || '';
-          }
-
-          // パイプライン進捗（アップロード進捗）のリアルタイム反映
-          if (data.pipeline) {
-            const p = data.pipeline;
-            if (p.phase === 'converting' || p.phase === 'uploading' || p.phase === 'verifying') {
-              uploadProgressContainer.classList.remove('hidden');
-              uploadStatusText.textContent = p.message || '処理中...';
-              uploadProgressBar.style.width = `${p.progressPercent || 20}%`;
-              uploadCountBadge.textContent = p.currentFile ? p.currentFile : '処理中';
-              uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
-            } else if (p.phase === 'completed') {
-              uploadProgressContainer.classList.remove('hidden');
-              uploadStatusText.textContent = p.message || '✅ アップロード完了！';
-              uploadProgressBar.style.width = '100%';
-              uploadCountBadge.textContent = '完了';
-              uploadSuccessMessage.classList.remove('hidden');
-            } else if (p.phase === 'error') {
-              uploadProgressContainer.classList.remove('hidden');
-              uploadStatusText.textContent = p.message || '❌ エラーが発生しました';
-              uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
-            }
-          }
-
-          // ヘルスステータス表示更新
-          if (data.isRecording && data.health) {
-            healthGuardBar?.classList.remove('hidden');
-            const recon = data.health.audioReconnectCount > 0 ? ` (再接続:${data.health.audioReconnectCount}回)` : '';
-            healthDeviceSummary.textContent = `🔊 ${data.health.activePlaybackDevice || '既定'} / 🎤 ${data.health.activeMicDevice || '既定'}${recon}`;
-
-            if (data.health.overallStatus === 'warning' && data.health.warningMessage) {
-              healthWarningBanner?.classList.remove('hidden');
-              healthWarningText.textContent = data.health.warningMessage;
-            } else {
-              healthWarningBanner?.classList.add('hidden');
-            }
+          if (data.isRecording) {
+            shotCountText.textContent = `撮影: ${data.screenshotCount || 0} 枚`;
+            const level = Math.round((data.audioLevel || 0) * 100);
+            updateVolumeBars(level);
           } else {
-            healthGuardBar?.classList.add('hidden');
-            healthWarningBanner?.classList.add('hidden');
+            updateVolumeBars(0);
+          }
+
+          // アップロード中プログレス更新
+          if (data.progress && data.progress.phase === 'uploading') {
+            uploadProgressContainer.classList.remove('hidden');
+            uploadStatusText.textContent = data.progress.message || 'Boxへアップロード中...';
+            uploadCountBadge.textContent = data.progress.badge || `${data.progress.percentage}%`;
+            uploadProgressBar.style.width = `${data.progress.percentage}%`;
+            uploadProgressBar.className = 'bg-blue-600 h-2 rounded-full transition-all duration-300';
           }
         } catch { /* ignore */ }
       }, 500);
+
+      // ログ＆スプールの定期自動更新 (3秒ごと)
+      setInterval(() => {
+        loadLogs();
+        loadPendingSessions();
+      }, 3000);
     }
 
     // HTMLエスケープヘルパー
@@ -1034,47 +1013,68 @@ public static class IndexHtml
         const res = await fetch('/api/sessions/pending');
         const list = await res.json();
         currentPendingSessions = list || [];
-        pendingList.innerHTML = '';
+        
         if (!list || list.length === 0) {
-          pendingList.innerHTML = '<div class="text-[11px] text-slate-500">未送信のスプールはありません。</div>';
+          pendingSpoolArea.classList.add('hidden');
+          pendingList.innerHTML = '';
           return;
         }
 
+        pendingSpoolArea.classList.remove('hidden');
+        pendingTitle.textContent = `未送信スプール (${list.length}件)`;
+        pendingList.innerHTML = '';
+
         list.forEach(item => {
           const row = document.createElement('div');
-          row.className = 'p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5';
+          row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-2 text-xs shadow-sm';
           const memoEscaped = escapeHtml(item.memo || '');
-          const hasMemoBadge = item.memo
-            ? `<span class="px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-700/60 text-indigo-300 text-[10px] font-normal truncate max-w-[220px]" title="${memoEscaped}">📝 ${memoEscaped}</span>`
-            : '';
+          const currentTheme = item.themeId || currentSelectedThemeId;
+
+          // テーマ2連スイッチのHTML生成
+          let themeButtonsHtml = '<div class="inline-flex rounded bg-slate-950 p-0.5 border border-slate-700/60">';
+          cachedThemes.forEach(t => {
+            const isSel = t.id === currentTheme;
+            const icon = t.name.includes('社員') ? '👥' : (t.name.includes('全体') ? '🌐' : '📁');
+            const cls = isSel 
+              ? 'px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-600 text-white' 
+              : 'px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-200';
+            themeButtonsHtml += `<button onclick="updateSpoolTheme('${item.sessionId}', '${t.id}')" class="${cls}">${icon} ${escapeHtml(t.name)}</button>`;
+          });
+          themeButtonsHtml += '</div>';
 
           row.innerHTML = `
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-1 flex-wrap">
               <div class="flex items-center space-x-2">
-                <span class="font-mono text-slate-200 text-xs font-semibold">${item.sessionId}</span>
-                ${hasMemoBadge}
+                <span class="font-mono text-slate-200 text-xs font-semibold">📁 ${item.sessionId}</span>
+                ${themeButtonsHtml}
               </div>
               <div class="flex items-center space-x-1.5">
-                <button onclick="manualUploadBox('${item.sessionId}')" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold transition">Box送信</button>
-                <button onclick="deleteSession('${item.sessionId}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 text-[10px] transition">削除</button>
+                <button onclick="manualUploadBox('${item.sessionId}')" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition flex items-center space-x-1">
+                  <span>🚀</span>
+                  <span>Box送信</span>
+                </button>
+                <button onclick="deleteSession('${item.sessionId}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 text-[11px] transition">削除</button>
               </div>
             </div>
-            <div class="flex items-center space-x-2 text-[10px] text-slate-400">
-              <span>📷 スクショ ${item.screenshotCount}枚</span>
-              <span>•</span>
-              <span>💾 ${(item.totalSizeBytes / 1024 / 1024).toFixed(1)}MB</span>
-            </div>
-            <div class="flex items-center space-x-1.5 pt-0.5">
-              <span class="text-[11px] text-slate-500">📝</span>
+            <div class="flex items-center space-x-2 bg-slate-950 border border-slate-800 focus-within:border-indigo-500 rounded px-2 py-1 transition">
+              <span class="text-slate-500 text-[11px]">📝</span>
               <input 
                 type="text" 
                 value="${memoEscaped}" 
-                placeholder="会議メモを追加・編集 (例: A社定例)..." 
-                class="flex-1 bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded px-2 py-1 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none transition" 
+                placeholder="会議メモを追加・編集..." 
+                class="flex-1 bg-transparent text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none" 
                 onchange="updateSpoolMemo('${item.sessionId}', this.value, this)" 
                 onkeydown="if(event.key==='Enter') this.blur();"
               />
               <span class="spool-memo-badge text-[10px] text-emerald-400 opacity-0 transition-opacity">✓</span>
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+              <div class="flex items-center space-x-2">
+                <span>📷 スクショ ${item.screenshotCount}枚</span>
+                <span>•</span>
+                <span>💾 ${(item.totalSizeBytes / 1024 / 1024).toFixed(1)}MB</span>
+              </div>
+              <span>${new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
           `;
           pendingList.appendChild(row);
@@ -1084,6 +1084,24 @@ public static class IndexHtml
       }
     }
 
+    // スプールのテーマ更新
+    window.updateSpoolTheme = async function(sessionId, themeId) {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/theme`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ themeId })
+        });
+        if (res.ok) {
+          await loadPendingSessions();
+          await loadLogs();
+        }
+      } catch (err) {
+        console.error('スプールテーマ更新エラー:', err);
+      }
+    };
+
+    // スプールメモ更新
     window.updateSpoolMemo = async function(sessionId, memo, inputEl) {
       const badge = inputEl.parentElement.querySelector('.spool-memo-badge');
       try {
@@ -1106,18 +1124,17 @@ public static class IndexHtml
     };
 
     window.manualUploadBox = async function(sessionId) {
-      const selectedOption = themeSelect.options[themeSelect.selectedIndex];
-      const currentThemeName = selectedOption ? selectedOption.text : '未設定';
-      const currentThemeId = themeSelect.value || null;
-
       const item = currentPendingSessions.find(s => s.sessionId === sessionId);
+      const targetThemeId = (item && item.themeId) || currentSelectedThemeId;
+      const targetTheme = cachedThemes.find(t => t.id === targetThemeId);
+      const themeName = targetTheme ? targetTheme.name : '既定';
+
       const memoText = item && item.memo ? `\n📝 メモ: 【${item.memo}】` : '';
 
       const confirmMsg =
         `セッション ${sessionId} をBoxへアップロードしますか？\n` +
         `${memoText}\n\n` +
-        `📁 保存先テーマ: 【${currentThemeName}】\n\n` +
-        `※ テーマが異なる場合は「キャンセル」を押し、上の会議テーマ選択を変更してから再度押してください。`;
+        `📁 保存先テーマ: 【${themeName}】`;
 
       if (!confirm(confirmMsg)) return;
 
@@ -1126,13 +1143,13 @@ public static class IndexHtml
       uploadStatusText.textContent = `Boxへアップロード準備中: ${sessionId}`;
       uploadCountBadge.textContent = '送信中';
       uploadProgressBar.style.width = '20%';
-      uploadProgressBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all duration-300';
+      uploadProgressBar.className = 'bg-blue-600 h-2 rounded-full transition-all duration-300';
 
       try {
         const res = await fetch('/api/box/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, themeId: currentThemeId })
+          body: JSON.stringify({ sessionId, themeId: targetThemeId })
         });
         const data = await res.json();
         if (data.success) {
@@ -1150,11 +1167,11 @@ public static class IndexHtml
           }, 5000);
         } else {
           uploadStatusText.textContent = `❌ アップロード失敗: ${data.message}`;
-          uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+          uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
         }
       } catch (err) {
         uploadStatusText.textContent = `❌ 通信エラー: ${err.message}`;
-        uploadProgressBar.className = 'bg-rose-500 h-2.5 rounded-full';
+        uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
       }
     };
 
@@ -1170,12 +1187,11 @@ public static class IndexHtml
 
     refreshPendingBtn.addEventListener('click', loadPendingSessions);
 
-    // 動作ログ ＆ Box格納履歴の整形と取得
+    // 動作ログの整形と取得 (案1: 1行バー ＆ 展開コンソール)
     function formatLogLine(line) {
       let cls = 'text-slate-400';
       let bg = '';
       
-      // 【Box格納完了】は太字・鮮やかなエメラルドグリーン＆薄緑背景で超目立つ
       if (line.includes('【Box格納完了】')) {
         cls = 'text-emerald-300 font-bold';
         bg = 'bg-emerald-950/60 border border-emerald-800/80 px-1.5 py-0.5 rounded my-0.5';
@@ -1214,13 +1230,29 @@ public static class IndexHtml
         lastLogJson = jsonStr;
 
         if (!logs || logs.length === 0) {
+          latestLogSummary.innerHTML = '<span class="text-slate-500 text-[10px]">ログはありません。</span>';
           logConsole.innerHTML = '<div class="text-slate-500 text-[10px]">ログはありません。</div>';
           return;
         }
 
+        // 1行ステータスバー用の最新ログ（直近のBox格納完了があればそれを優先）
+        let boxDoneLog = logs.slice().reverse().find(l => l.includes('【Box格納完了】'));
+        let targetLine = boxDoneLog || logs[logs.length - 1];
+        
+        let summaryHtml = escapeHtml(targetLine);
+        summaryHtml = summaryHtml.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" class="text-indigo-400 hover:underline font-bold">$1 ↗</a>');
+        
+        if (targetLine.includes('【Box格納完了】')) {
+          latestLogSummary.innerHTML = `<span class="text-emerald-400 font-bold">${summaryHtml}</span>`;
+        } else if (targetLine.includes('❌') || targetLine.includes('エラー')) {
+          latestLogSummary.innerHTML = `<span class="text-rose-400 font-medium">${summaryHtml}</span>`;
+        } else {
+          latestLogSummary.innerHTML = `<span class="text-slate-300">${summaryHtml}</span>`;
+        }
+
         logConsole.innerHTML = logs.map(formatLogLine).join('');
 
-        if (autoScrollLogs.checked) {
+        if (autoScrollLogs.checked && !logExpandedArea.classList.contains('hidden')) {
           logConsole.scrollTop = logConsole.scrollHeight;
         }
       } catch (err) {
@@ -1230,27 +1262,30 @@ public static class IndexHtml
 
     refreshLogsBtn.addEventListener('click', loadLogs);
     clearLogsBtn.addEventListener('click', async () => {
-      if (!confirm('メモリ上のログをクリアしますか？')) return;
       try {
         await fetch('/api/logs', { method: 'DELETE' });
-        lastLogJson = '';
         await loadLogs();
       } catch (err) {
         console.error('ログクリアエラー:', err);
       }
     });
 
-    // アプリ終了ボタン
+    // アプリ終了
     shutdownBtn.addEventListener('click', async () => {
-      if (!confirm('WinMeetingRecorder を終了しますか？')) return;
+      if (!confirm('WinMeetingRecorder を終了しますか？\n（録音中の場合は停止してから終了してください）')) return;
       try {
+        shutdownBtn.disabled = true;
+        shutdownBtn.textContent = '終了中...';
         await fetch('/api/app/shutdown', { method: 'POST' });
-        document.body.innerHTML = '<div class="text-center py-20 text-slate-400">アプリは終了しました。タブを閉じてください。</div>';
-      } catch {
-        alert('終了リクエストを送信しました。');
+        document.body.innerHTML = '<div class="flex items-center justify-center min-h-screen text-slate-400 font-mono text-sm">WinMeetingRecorder は終了しました。このタブを閉じてください。</div>';
+      } catch (err) {
+        alert('終了エラー: ' + err.message);
+        shutdownBtn.disabled = false;
+        shutdownBtn.textContent = '✕ 終了';
       }
     });
 
+    // ページロード開始
     init();
   </script>
 </body>

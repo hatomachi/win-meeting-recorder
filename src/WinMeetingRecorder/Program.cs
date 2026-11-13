@@ -1081,6 +1081,19 @@ public static class Program
             return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {sessionId}" });
         });
 
+        // API: 保管中の未送信スプールのテーマを更新
+        app.MapPut("/api/sessions/{sessionId}/theme", (string sessionId, SpoolService spool, ConfigService configService, SessionThemeRequest req) =>
+        {
+            var boxConfig = configService.LoadConfig().Box;
+            var themeName = boxConfig.Themes.FirstOrDefault(t => t.Id == req.ThemeId)?.Name;
+            bool updated = spool.UpdateSessionTheme(sessionId, req.ThemeId, themeName);
+            if (updated)
+            {
+                return Results.Ok(new { message = "テーマを更新しました。", sessionId, themeId = req.ThemeId, themeName });
+            }
+            return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {sessionId}" });
+        });
+
         // API: 直近の動作ログ一覧取得
         app.MapGet("/api/logs", (int? limit) =>
         {
@@ -1206,6 +1219,8 @@ public record RecordStopRequest(
     string? Memo = null);
 
 public record SessionMemoRequest(string? Memo);
+
+public record SessionThemeRequest(string ThemeId);
 
 public record BoxSelectThemeRequest(string ThemeId);
 
