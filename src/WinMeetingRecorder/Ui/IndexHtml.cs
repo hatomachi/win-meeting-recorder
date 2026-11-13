@@ -127,10 +127,16 @@ public static class IndexHtml
           </div>
         </div>
 
-        <!-- 右端: 撮影枚数 (録音中) -->
-        <div class="flex items-center space-x-2 text-[11px] text-slate-400">
+        <!-- 右端: 撮影プレビューピル (ライブサムネ ＋ 枚数) -->
+        <button id="shotPreviewBtn" type="button" disabled title="撮影済みスクリーンショットをプレビュー" class="group flex items-center space-x-2 px-2.5 py-1 rounded-lg bg-slate-950/70 border border-slate-800 text-[11px] text-slate-500 transition cursor-default">
+          <div id="shotThumbWrapper" class="hidden relative w-9 h-5 rounded overflow-hidden border border-slate-600/80 bg-slate-900 shrink-0 shadow-sm">
+            <img id="shotLatestThumb" src="" alt="最新スクショ" class="w-full h-full object-cover" />
+            <span class="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 ring-1 ring-slate-950"></span>
+          </div>
+          <span id="shotCountIcon" class="text-xs">🖼️</span>
           <span id="shotCountText" class="font-mono">撮影: 0 枚</span>
-        </div>
+          <span id="shotPreviewHint" class="hidden text-[10px] text-indigo-400 group-hover:text-indigo-300 font-semibold">プレビュー ↗</span>
+        </button>
       </div>
 
       <!-- 隠し互換用 (既存スクリプト・ヘルスモニター用) -->
@@ -339,6 +345,88 @@ public static class IndexHtml
       </div>
     </div>
 
+    <!-- 7. 📸 スクリーンショットプレビュー・ギャラリーモーダル -->
+    <div id="imageGalleryModal" class="hidden fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col p-3 md:p-5 select-none">
+      
+      <!-- モーダル上部ヘッダー -->
+      <div class="w-full max-w-5xl mx-auto flex items-center justify-between gap-2 pb-2.5 border-b border-slate-800/90 shrink-0 flex-wrap">
+        <div class="flex items-center space-x-2 min-w-0">
+          <span class="text-lg">📸</span>
+          <div class="flex items-center space-x-2 flex-wrap gap-y-1 min-w-0">
+            <h2 class="text-sm font-bold text-white">撮影プレビュー</h2>
+            <span id="galleryCounterBadge" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">0 / 0 枚</span>
+            <span id="gallerySessionLabel" class="text-[10px] font-mono text-slate-400 truncate max-w-[150px]"></span>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-1.5">
+          <!-- 録音中のみ表示: その場ですぐ追加撮影 -->
+          <button id="galleryCaptureNowBtn" type="button" class="hidden px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition flex items-center space-x-1 shadow-sm">
+            <span>📸</span>
+            <span>今すぐ追加</span>
+          </button>
+          <button id="galleryZoomToggleBtn" type="button" title="原寸拡大 / 全体表示を切替" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition border border-slate-700">
+            🔍 拡大
+          </button>
+          <button id="galleryRefreshBtn" type="button" title="最新の一覧を再読込" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition border border-slate-700">
+            🔄
+          </button>
+          <button id="closeGalleryBtn" type="button" title="閉じる (Esc)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-white text-xs font-bold transition border border-slate-700">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- 新規撮影ライブ通知バー (録音中に新しい画像が増えたら表示) -->
+      <div id="galleryLiveNotice" class="hidden w-full max-w-5xl mx-auto mt-2 px-3 py-1.5 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 text-xs flex items-center justify-between shrink-0">
+        <span id="galleryLiveNoticeText">✨ 新しいスクリーンショットが撮影されました！</span>
+        <button id="galleryJumpLatestBtn" type="button" class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition">
+          最新へ移動 ↘
+        </button>
+      </div>
+
+      <!-- メイン画像ステージ -->
+      <div class="relative flex-1 w-full max-w-5xl mx-auto my-2 min-h-0 flex items-center justify-center">
+        <!-- 前へボタン -->
+        <button id="galleryPrevBtn" type="button" title="前の画像 (←)" class="absolute left-2 z-10 w-9 h-9 md:w-11 md:h-11 rounded-full bg-slate-900/80 hover:bg-indigo-600 text-white border border-slate-700/80 shadow-lg flex items-center justify-center transition disabled:opacity-25 disabled:cursor-not-allowed">
+          <span class="text-sm md:text-base">◀</span>
+        </button>
+
+        <!-- 画像コンテナ (全体表示 ↔ 原寸スクロール拡大対応) -->
+        <div id="galleryImageViewport" class="w-full h-full flex items-center justify-center overflow-hidden rounded-xl bg-slate-900/60 border border-slate-800/90 p-2">
+          <img id="galleryMainImage" src="" alt="スクリーンショットプレビュー" class="max-w-full max-h-full object-contain rounded shadow-2xl cursor-zoom-in transition-transform duration-150" />
+          <div id="galleryEmptyState" class="hidden text-center text-slate-400 text-xs space-y-2 py-10">
+            <div class="text-3xl">🖼️</div>
+            <div>まだスクリーンショットがありません</div>
+          </div>
+        </div>
+
+        <!-- 次へボタン -->
+        <button id="galleryNextBtn" type="button" title="次の画像 (→)" class="absolute right-2 z-10 w-9 h-9 md:w-11 md:h-11 rounded-full bg-slate-900/80 hover:bg-indigo-600 text-white border border-slate-700/80 shadow-lg flex items-center justify-center transition disabled:opacity-25 disabled:cursor-not-allowed">
+          <span class="text-sm md:text-base">▶</span>
+        </button>
+      </div>
+
+      <!-- 選択中画像のメタデータバー -->
+      <div class="w-full max-w-5xl mx-auto flex items-center justify-between text-[11px] text-slate-300 px-1 pb-2 gap-2 flex-wrap shrink-0">
+        <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+          <span id="galleryMetaElapsed" class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-sky-300">⏱️ 00:00</span>
+          <span id="galleryMetaReason" class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-200">スライド変化</span>
+          <span id="galleryMetaTime" class="text-slate-400 font-mono"></span>
+        </div>
+        <div class="flex items-center space-x-2 text-slate-500 font-mono text-[10px]">
+          <span id="galleryMetaFileName"></span>
+          <span class="hidden sm:inline">• ←/→で切替 • クリックで拡大 • Escで閉じる</span>
+        </div>
+      </div>
+
+      <!-- 下部 フィルムストリップ (サムネイル一覧) -->
+      <div id="galleryThumbStrip" class="w-full max-w-5xl mx-auto flex items-center space-x-2 overflow-x-auto py-1.5 px-1 border-t border-slate-800/80 shrink-0">
+        <!-- JSで動的生成 -->
+      </div>
+
+    </div>
+
   </div>
 
   <script>
@@ -353,9 +441,36 @@ public static class IndexHtml
     const recordBtnText = document.getElementById('recordBtnText');
     const screenshotBtn = document.getElementById('screenshotBtn');
     const timerText = document.getElementById('timerText');
+    const shotPreviewBtn = document.getElementById('shotPreviewBtn');
+    const shotThumbWrapper = document.getElementById('shotThumbWrapper');
+    const shotLatestThumb = document.getElementById('shotLatestThumb');
+    const shotCountIcon = document.getElementById('shotCountIcon');
     const shotCountText = document.getElementById('shotCountText');
+    const shotPreviewHint = document.getElementById('shotPreviewHint');
     const meetingMemoInput = document.getElementById('meetingMemoInput');
     const memoSaveStatus = document.getElementById('memoSaveStatus');
+
+    // スクショギャラリーモーダル要素
+    const imageGalleryModal = document.getElementById('imageGalleryModal');
+    const galleryCounterBadge = document.getElementById('galleryCounterBadge');
+    const gallerySessionLabel = document.getElementById('gallerySessionLabel');
+    const galleryCaptureNowBtn = document.getElementById('galleryCaptureNowBtn');
+    const galleryZoomToggleBtn = document.getElementById('galleryZoomToggleBtn');
+    const galleryRefreshBtn = document.getElementById('galleryRefreshBtn');
+    const closeGalleryBtn = document.getElementById('closeGalleryBtn');
+    const galleryLiveNotice = document.getElementById('galleryLiveNotice');
+    const galleryLiveNoticeText = document.getElementById('galleryLiveNoticeText');
+    const galleryJumpLatestBtn = document.getElementById('galleryJumpLatestBtn');
+    const galleryPrevBtn = document.getElementById('galleryPrevBtn');
+    const galleryNextBtn = document.getElementById('galleryNextBtn');
+    const galleryImageViewport = document.getElementById('galleryImageViewport');
+    const galleryMainImage = document.getElementById('galleryMainImage');
+    const galleryEmptyState = document.getElementById('galleryEmptyState');
+    const galleryMetaElapsed = document.getElementById('galleryMetaElapsed');
+    const galleryMetaReason = document.getElementById('galleryMetaReason');
+    const galleryMetaTime = document.getElementById('galleryMetaTime');
+    const galleryMetaFileName = document.getElementById('galleryMetaFileName');
+    const galleryThumbStrip = document.getElementById('galleryThumbStrip');
 
     // Zoom風 音量インジケーター (4本バー)
     const vBar1 = document.getElementById('vBar1');
@@ -760,6 +875,67 @@ public static class IndexHtml
       }
     });
 
+    let activeSessionId = null;
+    let lastPolledShotCount = -1;
+    let lastShownThumbUrl = '';
+    let shotFlashTimer = null;
+    let isStoppingLocally = false;
+
+    function resetShotPreviewPill() {
+      lastPolledShotCount = 0;
+      lastShownThumbUrl = '';
+      shotCountText.textContent = '撮影: 0 枚';
+      shotThumbWrapper.classList.add('hidden');
+      shotLatestThumb.removeAttribute('src');
+      shotCountIcon.classList.remove('hidden');
+      shotPreviewHint.classList.add('hidden');
+      shotPreviewBtn.disabled = true;
+      shotPreviewBtn.className = 'group flex items-center space-x-2 px-2.5 py-1 rounded-lg bg-slate-950/70 border border-slate-800 text-[11px] text-slate-500 transition cursor-default';
+    }
+
+    function updateShotPreviewPill(count, latestImage, flashOnIncrease = false) {
+      const safeCount = Math.max(0, count || 0);
+      const prevCount = lastPolledShotCount;
+      shotCountText.textContent = `撮影: ${safeCount} 枚`;
+
+      if (safeCount > 0) {
+        shotPreviewBtn.disabled = false;
+        const baseCls = 'group flex items-center space-x-2 px-2.5 py-1 rounded-lg bg-slate-950/90 hover:bg-slate-800 border border-slate-700 hover:border-indigo-500/70 text-[11px] text-slate-200 transition cursor-pointer shadow-sm';
+        
+        if (flashOnIncrease && prevCount >= 0 && safeCount > prevCount) {
+          shotPreviewBtn.className = `${baseCls} ring-2 ring-emerald-400/80 border-emerald-400/80`;
+          clearTimeout(shotFlashTimer);
+          shotFlashTimer = setTimeout(() => {
+            if (!shotPreviewBtn.disabled) {
+              shotPreviewBtn.className = baseCls;
+            }
+          }, 1500);
+        } else if (!shotPreviewBtn.className.includes('ring-emerald-400')) {
+          shotPreviewBtn.className = baseCls;
+        }
+
+        shotPreviewHint.classList.remove('hidden');
+
+        if (latestImage && latestImage.url) {
+          if (lastShownThumbUrl !== latestImage.url) {
+            lastShownThumbUrl = latestImage.url;
+            shotLatestThumb.src = latestImage.url;
+          }
+          shotThumbWrapper.classList.remove('hidden');
+          shotCountIcon.classList.add('hidden');
+        }
+      } else {
+        resetShotPreviewPill();
+      }
+
+      lastPolledShotCount = safeCount;
+    }
+
+    shotPreviewBtn.addEventListener('click', () => {
+      if (shotPreviewBtn.disabled) return;
+      openActiveSessionGallery();
+    });
+
     async function startRecording() {
       const playbackId = playbackSelect.value || null;
       const captureId = captureSelect.value || null;
@@ -783,8 +959,11 @@ public static class IndexHtml
           })
         });
         const data = await res.json();
-        if (data.success) {
+        if (res.ok) {
           isRecording = true;
+          activeSessionId = data.sessionId || null;
+          resetShotPreviewPill();
+
           recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-slate-700 hover:bg-slate-600 text-white shadow-md transition flex items-center space-x-1.5';
           recordBtnIcon.className = 'w-2 h-2 rounded-sm bg-rose-400';
           recordBtnText.textContent = '記録停止';
@@ -798,8 +977,9 @@ public static class IndexHtml
           startTime = Date.now();
           startTimer();
           uploadProgressContainer.classList.add('hidden');
+          setTimeout(pollStatusOnce, 250);
         } else {
-          alert('開始エラー: ' + data.error);
+          alert('開始エラー: ' + (data.error || '記録開始に失敗しました'));
         }
       } catch (err) {
         alert('通信エラー: ' + err.message);
@@ -812,6 +992,7 @@ public static class IndexHtml
     async function stopRecording() {
       recordBtn.disabled = true;
       recordBtnText.textContent = '停止中...';
+      isStoppingLocally = true;
 
       uploadProgressContainer.classList.remove('hidden');
       uploadSuccessMessage.classList.add('hidden');
@@ -835,6 +1016,7 @@ public static class IndexHtml
         const data = await res.json();
 
         isRecording = false;
+        activeSessionId = null;
         stopTimer();
         timerText.textContent = '待機中';
         statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5';
@@ -845,8 +1027,12 @@ public static class IndexHtml
         recordBtnText.textContent = '記録開始';
         screenshotBtn.disabled = true;
         screenshotBtn.classList.add('hidden');
+        resetShotPreviewPill();
+        if (isGalleryOpen) {
+          galleryCaptureNowBtn.classList.add('hidden');
+        }
 
-        if (data.success) {
+        if (res.ok) {
           if (data.boxUpload && data.boxUpload.success) {
             uploadProgressBar.style.width = '100%';
             uploadStatusText.textContent = '✅ BoxへのZIPアップロードが完了しました！';
@@ -864,13 +1050,14 @@ public static class IndexHtml
             uploadCountBadge.textContent = '完了';
           }
         } else {
-          uploadStatusText.textContent = `❌ 停止処理エラー: ${data.error}`;
+          uploadStatusText.textContent = `❌ 停止処理エラー: ${data.error || '停止処理に失敗しました'}`;
           uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
         }
       } catch (err) {
         uploadStatusText.textContent = `❌ 通信エラー: ${err.message}`;
         uploadProgressBar.className = 'bg-rose-500 h-2 rounded-full';
       } finally {
+        isStoppingLocally = false;
         recordBtn.disabled = false;
         await loadPendingSessions();
         await loadLogs();
@@ -881,8 +1068,10 @@ public static class IndexHtml
       try {
         const res = await fetch('/api/record/screenshot', { method: 'POST' });
         if (res.ok) {
+          const data = await res.json();
           const current = parseInt(shotCountText.textContent.replace(/[^0-9]/g, '') || '0', 10);
-          shotCountText.textContent = `撮影: ${current + 1} 枚`;
+          updateShotPreviewPill(current + 1, data.url ? { url: data.url, fileName: data.capture?.fileName } : null, true);
+          setTimeout(pollStatusOnce, 150);
           setTimeout(loadLogs, 300);
         }
       } catch (err) {
@@ -950,63 +1139,94 @@ public static class IndexHtml
     }
 
     // ステータスポーリング
-    function startPollingStatus() {
-      setInterval(async () => {
-        try {
-          const res = await fetch('/api/record/status');
-          if (!res.ok) return;
-          const data = await res.json();
-          
-          if (data.isRecording && !isRecording) {
-            isRecording = true;
-            recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-slate-700 hover:bg-slate-600 text-white shadow-md transition flex items-center space-x-1.5';
-            recordBtnIcon.className = 'w-2 h-2 rounded-sm bg-rose-400';
-            recordBtnText.textContent = '記録停止';
-            screenshotBtn.disabled = false;
-            screenshotBtn.classList.remove('hidden');
-            screenshotBtn.classList.remove('cursor-not-allowed', 'text-slate-500');
-            screenshotBtn.classList.add('bg-slate-700', 'text-slate-200', 'hover:bg-slate-600');
+    async function pollStatusOnce() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
 
-            statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center space-x-1.5 animate-pulse';
+        if (data.sessionId) {
+          activeSessionId = data.sessionId;
+        }
 
-            if (data.elapsedSeconds) {
-              startTime = Date.now() - (data.elapsedSeconds * 1000);
-            } else if (!startTime) {
-              startTime = Date.now();
+        if (data.isRecording && !isRecording) {
+          isRecording = true;
+          lastPolledShotCount = -1;
+          recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-slate-700 hover:bg-slate-600 text-white shadow-md transition flex items-center space-x-1.5';
+          recordBtnIcon.className = 'w-2 h-2 rounded-sm bg-rose-400';
+          recordBtnText.textContent = '記録停止';
+          screenshotBtn.disabled = false;
+          screenshotBtn.classList.remove('hidden');
+          screenshotBtn.classList.remove('cursor-not-allowed', 'text-slate-500');
+          screenshotBtn.classList.add('bg-slate-700', 'text-slate-200', 'hover:bg-slate-600');
+
+          statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center space-x-1.5 animate-pulse';
+
+          if (data.elapsedSeconds !== undefined && data.elapsedSeconds !== null) {
+            startTime = Date.now() - (data.elapsedSeconds * 1000);
+          } else if (!startTime) {
+            startTime = Date.now();
+          }
+          startTimer();
+
+          if (data.memo && !meetingMemoInput.value && document.activeElement !== meetingMemoInput) {
+            meetingMemoInput.value = data.memo;
+          }
+        } else if (!data.isRecording && isRecording) {
+          isRecording = false;
+          activeSessionId = null;
+          stopTimer();
+          timerText.textContent = '待機中';
+          statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5';
+          statusBadge.classList.remove('animate-pulse');
+
+          recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition flex items-center space-x-1.5';
+          recordBtnIcon.className = 'w-2 h-2 rounded-full bg-emerald-400';
+          recordBtnText.textContent = '記録開始';
+          screenshotBtn.disabled = true;
+          screenshotBtn.classList.add('hidden');
+          resetShotPreviewPill();
+          if (isGalleryOpen) {
+            galleryCaptureNowBtn.classList.add('hidden');
+          }
+        }
+
+        if (data.isRecording) {
+          const prevCount = lastPolledShotCount;
+          const nextCount = data.capturedCount ?? 0;
+          updateShotPreviewPill(nextCount, data.latestImage, prevCount >= 0);
+
+          if (isGalleryOpen && activeSessionId && gallerySessionId === activeSessionId) {
+            galleryCaptureNowBtn.classList.remove('hidden');
+            if (prevCount >= 0 && nextCount !== prevCount) {
+              loadGalleryImages(activeSessionId, { preservePosition: true, isAutoUpdate: true });
             }
-            startTimer();
-          } else if (!data.isRecording && isRecording) {
-            isRecording = false;
-            stopTimer();
-            timerText.textContent = '待機中';
-            statusBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5';
-            statusBadge.classList.remove('animate-pulse');
-
-            recordBtn.className = 'px-4 py-1.5 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 transition flex items-center space-x-1.5';
-            recordBtnIcon.className = 'w-2 h-2 rounded-full bg-emerald-400';
-            recordBtnText.textContent = '記録開始';
-            screenshotBtn.disabled = true;
-            screenshotBtn.classList.add('hidden');
           }
 
-          if (data.isRecording) {
-            shotCountText.textContent = `撮影: ${data.screenshotCount || 0} 枚`;
-            const level = Math.round((data.audioLevel || 0) * 100);
-            updateVolumeBars(level);
-          } else {
-            updateVolumeBars(0);
-          }
+          const level = Math.round((data.audioLevel || 0) * 100);
+          updateVolumeBars(level);
+        } else {
+          updateVolumeBars(0);
+        }
 
-          // アップロード中プログレス更新
-          if (data.progress && data.progress.phase === 'uploading') {
+        // アップロード中プログレス更新 (トレイ停止等の同期用)
+        if (!isStoppingLocally && data.pipeline) {
+          const p = data.pipeline;
+          if (p.phase === 'converting' || p.phase === 'uploading' || p.phase === 'verifying') {
             uploadProgressContainer.classList.remove('hidden');
-            uploadStatusText.textContent = data.progress.message || 'Boxへアップロード中...';
-            uploadCountBadge.textContent = data.progress.badge || `${data.progress.percentage}%`;
-            uploadProgressBar.style.width = `${data.progress.percentage}%`;
+            uploadSuccessMessage.classList.add('hidden');
+            uploadStatusText.textContent = p.message || 'Boxへアップロード中...';
+            uploadCountBadge.textContent = p.currentFile || `${p.progressPercent || 0}%`;
+            uploadProgressBar.style.width = `${p.progressPercent || 0}%`;
             uploadProgressBar.className = 'bg-blue-600 h-2 rounded-full transition-all duration-300';
           }
-        } catch { /* ignore */ }
-      }, 500);
+        }
+      } catch { /* ignore */ }
+    }
+
+    function startPollingStatus() {
+      pollStatusOnce();
+      setInterval(pollStatusOnce, 500);
 
       // ログ＆スプールの定期自動更新 (3秒ごと)
       setInterval(() => {
@@ -1026,14 +1246,306 @@ public static class IndexHtml
         .replace(/'/g, '&#039;');
     }
 
+    // --------------------------------------------------------
+    // 📸 スクリーンショット プレビュー・ギャラリーモーダル
+    // --------------------------------------------------------
+    let isGalleryOpen = false;
+    let gallerySessionId = null;
+    let galleryImages = [];
+    let galleryIndex = 0;
+    let isGalleryZoomed = false;
+    let renderedStripKey = '';
+
+    function formatCaptureReason(reason) {
+      switch ((reason || '').toLowerCase()) {
+        case 'initial': return '🎬 開始時';
+        case 'manual': return '📸 手動撮影';
+        case 'diff':
+        case 'phash':
+        case 'hybrid': return '✨ スライド変化';
+        case 'timer':
+        case 'interval': return '⏱️ 定期保存';
+        case 'resume': return '🔓 画面ロック復帰';
+        case 'recovered':
+        case 'captured': return '🖼️ 撮影済';
+        default: return reason ? `🖼️ ${reason}` : '🖼️ 撮影済';
+      }
+    }
+
+    function formatElapsedTime(seconds) {
+      const s = Math.max(0, Math.floor(seconds || 0));
+      const hh = Math.floor(s / 3600);
+      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const ss = String(s % 60).padStart(2, '0');
+      return hh > 0 ? `${String(hh).padStart(2, '0')}:${mm}:${ss}` : `${mm}:${ss}`;
+    }
+
+    function setGalleryZoom(zoomed) {
+      isGalleryZoomed = !!zoomed;
+      if (isGalleryZoomed) {
+        galleryImageViewport.className = 'w-full h-full overflow-auto block rounded-xl bg-slate-900/60 border border-slate-800/90 p-2';
+        galleryMainImage.className = 'max-w-none max-h-none w-auto h-auto mx-auto rounded shadow-2xl cursor-zoom-out';
+        galleryZoomToggleBtn.textContent = '🗗 全体表示';
+      } else {
+        galleryImageViewport.className = 'w-full h-full flex items-center justify-center overflow-hidden rounded-xl bg-slate-900/60 border border-slate-800/90 p-2';
+        galleryMainImage.className = 'max-w-full max-h-full object-contain rounded shadow-2xl cursor-zoom-in transition-transform duration-150';
+        galleryZoomToggleBtn.textContent = '🔍 拡大';
+      }
+    }
+
+    window.openSessionGallery = async function(sessionId) {
+      if (!sessionId) return;
+      gallerySessionId = sessionId;
+      galleryImages = [];
+      galleryIndex = 0;
+      renderedStripKey = '';
+      galleryLiveNotice.classList.add('hidden');
+      setGalleryZoom(false);
+
+      gallerySessionLabel.textContent = sessionId;
+      imageGalleryModal.classList.remove('hidden');
+      isGalleryOpen = true;
+      renderGallery();
+
+      await loadGalleryImages(sessionId, { jumpToLast: true });
+    };
+
+    async function openActiveSessionGallery() {
+      if (activeSessionId) {
+        await window.openSessionGallery(activeSessionId);
+        return;
+      }
+      try {
+        const res = await fetch('/api/record/images');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sessionId) {
+            activeSessionId = data.sessionId;
+            await window.openSessionGallery(data.sessionId);
+          }
+        }
+      } catch (err) {
+        console.error('アクティブセッション画像取得エラー:', err);
+      }
+    }
+
+    function closeGallery() {
+      isGalleryOpen = false;
+      imageGalleryModal.classList.add('hidden');
+      galleryLiveNotice.classList.add('hidden');
+      setGalleryZoom(false);
+    }
+
+    async function loadGalleryImages(sessionId, { jumpToLast = false, preservePosition = false, isAutoUpdate = false } = {}) {
+      if (!sessionId) return;
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/images`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const nextImages = data.images || [];
+
+        const prevLen = galleryImages.length;
+        const prevFile = galleryImages[galleryIndex] ? galleryImages[galleryIndex].fileName : null;
+        const wasAtLatest = prevLen > 0 && galleryIndex === prevLen - 1;
+
+        galleryImages = nextImages;
+
+        if (galleryImages.length === 0) {
+          galleryIndex = 0;
+        } else if (jumpToLast || prevLen === 0) {
+          galleryIndex = galleryImages.length - 1;
+        } else if (preservePosition) {
+          if (wasAtLatest && galleryImages.length > prevLen) {
+            galleryIndex = galleryImages.length - 1;
+          } else if (prevFile) {
+            const idx = galleryImages.findIndex(img => img.fileName === prevFile);
+            galleryIndex = idx >= 0 ? idx : Math.min(galleryIndex, galleryImages.length - 1);
+            if (isAutoUpdate && galleryImages.length > prevLen) {
+              galleryLiveNoticeText.textContent = `✨ 新しいスクショが追加されました (計 ${galleryImages.length} 枚)`;
+              galleryLiveNotice.classList.remove('hidden');
+            }
+          }
+        }
+
+        renderGallery();
+      } catch (err) {
+        console.error('ギャラリー画像取得エラー:', err);
+      }
+    }
+
+    function renderGallery() {
+      const canCapture = isRecording && activeSessionId && gallerySessionId === activeSessionId;
+      if (canCapture) {
+        galleryCaptureNowBtn.classList.remove('hidden');
+      } else {
+        galleryCaptureNowBtn.classList.add('hidden');
+      }
+
+      if (!galleryImages || galleryImages.length === 0) {
+        galleryCounterBadge.textContent = '0 / 0 枚';
+        galleryMainImage.classList.add('hidden');
+        galleryEmptyState.classList.remove('hidden');
+        galleryPrevBtn.disabled = true;
+        galleryNextBtn.disabled = true;
+        galleryMetaElapsed.textContent = '⏱️ --:--';
+        galleryMetaReason.textContent = '待機中';
+        galleryMetaTime.textContent = '';
+        galleryMetaFileName.textContent = '';
+        galleryThumbStrip.innerHTML = '';
+        renderedStripKey = '';
+        return;
+      }
+
+      galleryIndex = Math.max(0, Math.min(galleryIndex, galleryImages.length - 1));
+      const item = galleryImages[galleryIndex];
+
+      galleryCounterBadge.textContent = `${galleryIndex + 1} / ${galleryImages.length} 枚`;
+      galleryMainImage.classList.remove('hidden');
+      galleryEmptyState.classList.add('hidden');
+
+      if (galleryMainImage.getAttribute('src') !== item.url) {
+        galleryMainImage.src = item.url;
+      }
+
+      galleryPrevBtn.disabled = galleryIndex <= 0;
+      galleryNextBtn.disabled = galleryIndex >= galleryImages.length - 1;
+
+      if (galleryIndex === galleryImages.length - 1) {
+        galleryLiveNotice.classList.add('hidden');
+      }
+
+      galleryMetaElapsed.textContent = `⏱️ ${formatElapsedTime(item.elapsedSeconds)}`;
+      galleryMetaReason.textContent = formatCaptureReason(item.reason);
+      galleryMetaTime.textContent = item.timestamp
+        ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        : '';
+      galleryMetaFileName.textContent = item.fileName || '';
+
+      // フィルムストリップは画像構成が変わった時だけ再生成し、選択状態のみ高速更新
+      const stripKey = `${gallerySessionId}:${galleryImages.map(i => i.fileName).join(',')}`;
+      if (renderedStripKey !== stripKey) {
+        renderedStripKey = stripKey;
+        galleryThumbStrip.innerHTML = '';
+        galleryImages.forEach((img, idx) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.idx = String(idx);
+          btn.className = 'gallery-thumb-item shrink-0 w-24 rounded-lg overflow-hidden bg-slate-900 border transition focus:outline-none text-left';
+          btn.innerHTML = `
+            <div class="w-full h-14 bg-slate-950 overflow-hidden">
+              <img src="${img.url}" alt="${escapeHtml(img.fileName)}" loading="lazy" class="w-full h-full object-cover" />
+            </div>
+            <div class="px-1.5 py-0.5 flex items-center justify-between text-[10px] font-mono text-slate-300 bg-slate-950/90">
+              <span>${formatElapsedTime(img.elapsedSeconds)}</span>
+              <span class="text-slate-500">#${idx + 1}</span>
+            </div>
+          `;
+          btn.addEventListener('click', () => {
+            galleryIndex = idx;
+            renderGallery();
+          });
+          galleryThumbStrip.appendChild(btn);
+        });
+      }
+
+      // 選択中のサムネイル強調とセンタリング
+      const thumbButtons = galleryThumbStrip.querySelectorAll('.gallery-thumb-item');
+      thumbButtons.forEach((btn, idx) => {
+        if (idx === galleryIndex) {
+          btn.className = 'gallery-thumb-item shrink-0 w-24 rounded-lg overflow-hidden bg-slate-900 border-2 border-indigo-400 ring-2 ring-indigo-500/50 transition focus:outline-none text-left';
+          btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        } else {
+          btn.className = 'gallery-thumb-item shrink-0 w-24 rounded-lg overflow-hidden bg-slate-900 border border-slate-700/80 opacity-65 hover:opacity-100 hover:border-slate-500 transition focus:outline-none text-left';
+        }
+      });
+    }
+
+    closeGalleryBtn.addEventListener('click', closeGallery);
+    galleryZoomToggleBtn.addEventListener('click', () => setGalleryZoom(!isGalleryZoomed));
+    galleryMainImage.addEventListener('click', () => setGalleryZoom(!isGalleryZoomed));
+    galleryRefreshBtn.addEventListener('click', () => loadGalleryImages(gallerySessionId, { preservePosition: true }));
+    galleryJumpLatestBtn.addEventListener('click', () => {
+      galleryIndex = Math.max(0, galleryImages.length - 1);
+      galleryLiveNotice.classList.add('hidden');
+      renderGallery();
+    });
+
+    galleryPrevBtn.addEventListener('click', () => {
+      if (galleryIndex > 0) {
+        galleryIndex--;
+        renderGallery();
+      }
+    });
+    galleryNextBtn.addEventListener('click', () => {
+      if (galleryIndex < galleryImages.length - 1) {
+        galleryIndex++;
+        renderGallery();
+      }
+    });
+
+    galleryCaptureNowBtn.addEventListener('click', async () => {
+      if (!isRecording || !gallerySessionId) return;
+      galleryCaptureNowBtn.disabled = true;
+      galleryCaptureNowBtn.innerHTML = '<span>⏳</span><span>撮影中...</span>';
+      try {
+        const res = await fetch('/api/record/screenshot', { method: 'POST' });
+        if (res.ok) {
+          await loadGalleryImages(gallerySessionId, { jumpToLast: true });
+          setTimeout(pollStatusOnce, 150);
+          setTimeout(loadLogs, 300);
+        }
+      } catch (err) {
+        console.error('ギャラリー内手動スクショエラー:', err);
+      } finally {
+        galleryCaptureNowBtn.disabled = false;
+        galleryCaptureNowBtn.innerHTML = '<span>📸</span><span>今すぐ追加</span>';
+      }
+    });
+
+    // キーボード操作 (ギャラリー ＆ 設定モーダル)
+    document.addEventListener('keydown', (e) => {
+      if (isGalleryOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeGallery();
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          if (galleryIndex > 0) {
+            galleryIndex--;
+            renderGallery();
+          }
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          if (galleryIndex < galleryImages.length - 1) {
+            galleryIndex++;
+            renderGallery();
+          }
+        }
+      } else if (!settingsModal.classList.contains('hidden') && e.key === 'Escape') {
+        settingsModal.classList.add('hidden');
+      }
+    });
+
     // 未送信スプール
     let currentPendingSessions = [];
+    let lastPendingJson = '';
 
-    async function loadPendingSessions() {
+    async function loadPendingSessions(forceRefresh = false) {
       try {
+        // メモ編集中はDOM再構築によるフォーカス喪失を防ぐ
+        if (!forceRefresh && pendingList.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
+          return;
+        }
+
         const res = await fetch('/api/sessions/pending');
         const list = await res.json();
         currentPendingSessions = list || [];
+
+        const stateKey = JSON.stringify({ list, isRecording, activeSessionId, currentSelectedThemeId, cachedThemes });
+        if (!forceRefresh && stateKey === lastPendingJson) {
+          return;
+        }
+        lastPendingJson = stateKey;
         
         if (!list || list.length === 0) {
           pendingSpoolArea.classList.add('hidden');
@@ -1049,7 +1561,9 @@ public static class IndexHtml
           const row = document.createElement('div');
           row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-2 text-xs shadow-sm';
           const memoEscaped = escapeHtml(item.memo || '');
+          const sessionEscaped = escapeHtml(item.sessionId);
           const currentTheme = item.themeId || currentSelectedThemeId;
+          const isActiveNow = isRecording && activeSessionId === item.sessionId;
 
           // テーマ2連スイッチのHTML生成
           let themeButtonsHtml = '<div class="inline-flex rounded bg-slate-950 p-0.5 border border-slate-700/60">';
@@ -1059,22 +1573,33 @@ public static class IndexHtml
             const cls = isSel 
               ? 'px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-600 text-white' 
               : 'px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-200';
-            themeButtonsHtml += `<button onclick="updateSpoolTheme('${item.sessionId}', '${t.id}')" class="${cls}">${icon} ${escapeHtml(t.name)}</button>`;
+            themeButtonsHtml += `<button onclick="updateSpoolTheme('${sessionEscaped}', '${escapeHtml(t.id)}')" class="${cls}">${icon} ${escapeHtml(t.name)}</button>`;
           });
           themeButtonsHtml += '</div>';
+
+          const actionButtonsHtml = isActiveNow
+            ? `<span class="px-2 py-1 rounded bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[10px] font-semibold animate-pulse">🔴 記録中</span>`
+            : `<button onclick="manualUploadBox('${sessionEscaped}')" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition flex items-center space-x-1">
+                 <span>🚀</span>
+                 <span>Box送信</span>
+               </button>
+               <button onclick="deleteSession('${sessionEscaped}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 text-[11px] transition">削除</button>`;
+
+          const screenshotHtml = item.screenshotCount > 0
+            ? `<button onclick="openSessionGallery('${sessionEscaped}')" class="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600/40 border border-slate-700 hover:border-indigo-500/60 text-indigo-300 hover:text-white transition cursor-pointer" title="撮影済みスクリーンショットをプレビュー">
+                 <span>🖼️</span>
+                 <span>スクショ ${item.screenshotCount}枚 (プレビュー)</span>
+               </button>`
+            : `<span>📷 スクショ 0枚</span>`;
 
           row.innerHTML = `
             <div class="flex items-center justify-between gap-1 flex-wrap">
               <div class="flex items-center space-x-2">
-                <span class="font-mono text-slate-200 text-xs font-semibold">📁 ${item.sessionId}</span>
+                <span class="font-mono text-slate-200 text-xs font-semibold">📁 ${sessionEscaped}</span>
                 ${themeButtonsHtml}
               </div>
               <div class="flex items-center space-x-1.5">
-                <button onclick="manualUploadBox('${item.sessionId}')" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition flex items-center space-x-1">
-                  <span>🚀</span>
-                  <span>Box送信</span>
-                </button>
-                <button onclick="deleteSession('${item.sessionId}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 text-[11px] transition">削除</button>
+                ${actionButtonsHtml}
               </div>
             </div>
             <div class="flex items-center space-x-2 bg-slate-950 border border-slate-800 focus-within:border-indigo-500 rounded px-2 py-1 transition">
@@ -1084,14 +1609,14 @@ public static class IndexHtml
                 value="${memoEscaped}" 
                 placeholder="会議メモを追加・編集..." 
                 class="flex-1 bg-transparent text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none" 
-                onchange="updateSpoolMemo('${item.sessionId}', this.value, this)" 
+                onchange="updateSpoolMemo('${sessionEscaped}', this.value, this)" 
                 onkeydown="if(event.key==='Enter') this.blur();"
               />
               <span class="spool-memo-badge text-[10px] text-emerald-400 opacity-0 transition-opacity">✓</span>
             </div>
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
               <div class="flex items-center space-x-2">
-                <span>📷 スクショ ${item.screenshotCount}枚</span>
+                ${screenshotHtml}
                 <span>•</span>
                 <span>💾 ${(item.totalSizeBytes / 1024 / 1024).toFixed(1)}MB</span>
               </div>
@@ -1108,13 +1633,13 @@ public static class IndexHtml
     // スプールのテーマ更新
     window.updateSpoolTheme = async function(sessionId, themeId) {
       try {
-        const res = await fetch(`/api/sessions/${sessionId}/theme`, {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/theme`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ themeId })
         });
         if (res.ok) {
-          await loadPendingSessions();
+          await loadPendingSessions(true);
           await loadLogs();
         }
       } catch (err) {
@@ -1126,7 +1651,7 @@ public static class IndexHtml
     window.updateSpoolMemo = async function(sessionId, memo, inputEl) {
       const badge = inputEl.parentElement.querySelector('.spool-memo-badge');
       try {
-        const res = await fetch(`/api/sessions/${sessionId}/memo`, {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/memo`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ memo: memo ? memo.trim() : null })
@@ -1136,7 +1661,7 @@ public static class IndexHtml
             badge.style.opacity = '1';
             setTimeout(() => { badge.style.opacity = '0'; }, 1500);
           }
-          await loadPendingSessions();
+          await loadPendingSessions(true);
           await loadLogs();
         }
       } catch (err) {
@@ -1181,7 +1706,10 @@ public static class IndexHtml
           if (data.folderUrl) {
             boxFolderLink.href = data.folderUrl;
           }
-          await loadPendingSessions();
+          if (isGalleryOpen && gallerySessionId === sessionId) {
+            closeGallery();
+          }
+          await loadPendingSessions(true);
           await loadLogs();
           setTimeout(() => {
             uploadProgressContainer.classList.add('hidden');
@@ -1199,14 +1727,17 @@ public static class IndexHtml
     window.deleteSession = async function(sessionId) {
       if (!confirm(`セッション ${sessionId} を削除しますか？`)) return;
       try {
-        await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
-        await loadPendingSessions();
+        await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+        if (isGalleryOpen && gallerySessionId === sessionId) {
+          closeGallery();
+        }
+        await loadPendingSessions(true);
       } catch (err) {
         alert(`削除エラー: ${err.message}`);
       }
     };
 
-    refreshPendingBtn.addEventListener('click', loadPendingSessions);
+    refreshPendingBtn.addEventListener('click', () => loadPendingSessions(true));
 
     // 動作ログの整形と取得 (案1: 1行バー ＆ 展開コンソール)
     function formatLogLine(line) {

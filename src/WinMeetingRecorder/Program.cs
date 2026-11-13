@@ -953,25 +953,114 @@ public static class Program
             });
         });
 
+        static object BuildSessionImagesResponse(string sessionId, SpoolService spool)
+        {
+            var images = spool.GetSessionImages(sessionId)
+                .Select(img => new
+                {
+                    fileName = img.FileName,
+                    elapsedSeconds = img.ElapsedSeconds,
+                    reason = img.Reason,
+                    diff = img.Diff,
+                    timestamp = img.Timestamp,
+                    url = $"/api/sessions/{Uri.EscapeDataString(sessionId)}/images/{Uri.EscapeDataString(img.FileName)}"
+                })
+                .ToList();
+
+            return new
+            {
+                sessionId,
+                count = images.Count,
+                images
+            };
+        }
+
+        static IResult ServeSessionImage(string sessionId, string fileName, SpoolService spool, HttpContext httpContext)
+        {
+            var filePath = spool.GetSessionImageFilePath(sessionId, fileName);
+            if (filePath == null)
+            {
+                return Results.NotFound(new { error = "画像が見つかりません。" });
+            }
+
+            var ext = Path.GetExtension(filePath);
+            var contentType = ext.Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
+            httpContext.Response.Headers.CacheControl = "public, max-age=3600";
+
+            try
+            {
+                var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                return Results.Stream(stream, contentType);
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"画像読み込みエラー: {ex.Message}", statusCode: 500);
+            }
+        }
+
         // API: 状態取得 (ワークフロー統合)
         app.MapGet("/api/status", (
             RecordingWorkflowService workflow, 
             AudioEngine audioEngine, 
             ScreenCaptureEngine screenEngine) =>
         {
+            var activeSession = workflow.ActiveSession;
+            var latestImg = workflow.LatestCapturedImage;
+            object? latestImageDto = (activeSession != null && latestImg != null)
+                ? new
+                {
+                    fileName = latestImg.FileName,
+                    elapsedSeconds = latestImg.ElapsedSeconds,
+                    reason = latestImg.Reason,
+                    timestamp = latestImg.Timestamp,
+                    url = $"/api/sessions/{Uri.EscapeDataString(activeSession.SessionId)}/images/{Uri.EscapeDataString(latestImg.FileName)}"
+                }
+                : null;
+
             return Results.Ok(new
             {
                 isRecording = workflow.IsRecording,
-                sessionId = workflow.ActiveSession?.SessionId,
+                sessionId = activeSession?.SessionId,
+                elapsedSeconds = (int)workflow.ElapsedTime.TotalSeconds,
                 memo = workflow.CurrentMemo,
                 currentFile = audioEngine.CurrentOutputFile,
                 isCapturing = screenEngine.IsCapturing,
                 capturedCount = screenEngine.CapturedCount,
+                latestImage = latestImageDto,
                 targetScreen = screenEngine.TargetScreen,
                 audioLevel = audioEngine.CurrentAudioLevel,
                 health = workflow.GetHealthStatus(),
                 pipeline = workflow.CurrentProgress
             });
+        });
+
+        // API: 録音中セッションの撮影済みスクショ一覧取得
+        app.MapGet("/api/record/images", (RecordingWorkflowService workflow, SpoolService spool) =>
+        {
+            var session = workflow.ActiveSession;
+            if (session == null)
+            {
+                return Results.Ok(new
+                {
+                    sessionId = (string?)null,
+                    count = 0,
+                    images = Array.Empty<object>()
+                });
+            }
+
+            return Results.Ok(BuildSessionImagesResponse(session.SessionId, spool));
+        });
+
+        // API: 録音中セッションの個別スクショ画像配信
+        app.MapGet("/api/record/images/{fileName}", (string fileName, RecordingWorkflowService workflow, SpoolService spool, HttpContext httpContext) =>
+        {
+            var session = workflow.ActiveSession;
+            if (session == null)
+            {
+                return Results.NotFound(new { error = "記録中のセッションがありません。" });
+            }
+
+            return ServeSessionImage(session.SessionId, fileName, spool, httpContext);
         });
 
         // API: 録音・画面キャプチャ開始 (ワークフロー統合)
@@ -1012,10 +1101,14 @@ public static class Program
                 return Results.BadRequest(new { error = "画面キャプチャ中ではありません。" });
             }
 
+            var sessionId = workflow.ActiveSession?.SessionId;
             return Results.Ok(new
             {
                 message = "手動スクショを撮影しました。",
-                capture = evt
+                capture = evt,
+                url = sessionId != null
+                    ? $"/api/sessions/{Uri.EscapeDataString(sessionId)}/images/{Uri.EscapeDataString(evt.FileName)}"
+                    : null
             });
         });
 
@@ -1123,6 +1216,23 @@ public static class Program
                 return Results.Ok(new { message = "メモを更新しました。", sessionId, memo = req.Memo });
             }
             return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {sessionId}" });
+        });
+
+        // API: 指定セッションのスクリーンショット一覧取得
+        app.MapGet("/api/sessions/{sessionId}/images", (string sessionId, SpoolService spool) =>
+        {
+            if (!spool.SessionExists(sessionId))
+            {
+                return Results.NotFound(new { error = $"指定されたセッションが見つかりません: {sessionId}" });
+            }
+
+            return Results.Ok(BuildSessionImagesResponse(sessionId, spool));
+        });
+
+        // API: 指定セッションの個別スクリーンショット画像配信
+        app.MapGet("/api/sessions/{sessionId}/images/{fileName}", (string sessionId, string fileName, SpoolService spool, HttpContext httpContext) =>
+        {
+            return ServeSessionImage(sessionId, fileName, spool, httpContext);
         });
 
         // API: 保管中の未送信スプールのテーマを更新

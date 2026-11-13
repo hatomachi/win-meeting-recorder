@@ -75,6 +75,7 @@ public class RecordingWorkflowService
     private DateTime? _recordStartTime;
     private string? _selectedThemeId;
     private string? _currentMemo;
+    private SessionImageItem? _latestCapturedImage;
 
     private CancellationTokenSource? _watchdogCts;
     private bool _silenceWarningNotified;
@@ -117,6 +118,17 @@ public class RecordingWorkflowService
             lock (_lock)
             {
                 return _activeSession;
+            }
+        }
+    }
+
+    public SessionImageItem? LatestCapturedImage
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _latestCapturedImage;
             }
         }
     }
@@ -241,6 +253,15 @@ public class RecordingWorkflowService
                 if (_activeSession != null)
                 {
                     _spoolService.RecordImageCaptured(_activeSession.SessionId, evt);
+                    _latestCapturedImage = new SessionImageItem
+                    {
+                        FileName = evt.FileName,
+                        RelativePath = evt.RelativePath,
+                        ElapsedSeconds = evt.ElapsedSeconds,
+                        Reason = evt.Reason,
+                        Diff = evt.Diff,
+                        Timestamp = evt.Timestamp
+                    };
                 }
             }
         };
@@ -335,6 +356,7 @@ public class RecordingWorkflowService
             // スプールディレクトリとメタデータの初期化 (テーマも永続化)
             var session = _spoolService.CreateSession(monitorIdx, screenInfo.Name, _currentMemo, _selectedThemeId, themeName);
             _activeSession = new ActiveSessionState(session.SessionId, session.SpoolDirectory);
+            _latestCapturedImage = null;
             _recordStartTime = DateTime.Now;
             _silenceWarningNotified = false;
 
@@ -401,6 +423,7 @@ public class RecordingWorkflowService
                     _ = _screenEngine.StopCaptureAsync();
                 }
                 _activeSession = null;
+                _latestCapturedImage = null;
                 _recordStartTime = null;
                 return Task.FromResult(new RecordingStartResult(false, $"記録開始に失敗しました: {ex.Message}"));
             }
@@ -530,6 +553,7 @@ public class RecordingWorkflowService
             stoppingSessionDir = _activeSession?.SpoolDirectory;
             stoppingMemo = !string.IsNullOrWhiteSpace(memo) ? memo.Trim() : _currentMemo;
             _activeSession = null;
+            _latestCapturedImage = null;
             _recordStartTime = null;
             _currentMemo = null;
         }

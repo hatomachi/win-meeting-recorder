@@ -319,6 +319,114 @@ public class SpoolService
     }
 
     /// <summary>
+    /// 指定セッションの撮影済みスクリーンショット一覧を取得します (実ファイル存在確認・補完付き)
+    /// </summary>
+    public List<SessionImageItem> GetSessionImages(string sessionDirOrId)
+    {
+        lock (_lock)
+        {
+            var metadata = GetSessionMetadata(sessionDirOrId);
+            if (metadata == null)
+            {
+                return new List<SessionImageItem>();
+            }
+
+            var imagesDir = Path.Combine(metadata.SpoolDirectory, "images");
+            if (!Directory.Exists(imagesDir))
+            {
+                return new List<SessionImageItem>();
+            }
+
+            var result = new List<SessionImageItem>();
+            var knownFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in metadata.Images)
+            {
+                if (string.IsNullOrWhiteSpace(item.FileName) || !IsSafePathSegment(item.FileName))
+                {
+                    continue;
+                }
+
+                var fullPath = Path.Combine(imagesDir, item.FileName);
+                if (File.Exists(fullPath) && knownFiles.Add(item.FileName))
+                {
+                    result.Add(item);
+                }
+            }
+
+            // メタデータ未反映のファイルがあればファイル名順で補完
+            try
+            {
+                var diskFiles = Directory.GetFiles(imagesDir, "*.jpg")
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var imgPath in diskFiles)
+                {
+                    var fi = new FileInfo(imgPath);
+                    if (!knownFiles.Add(fi.Name))
+                    {
+                        continue;
+                    }
+
+                    var fallbackElapsed = Math.Max(0, (int)(fi.CreationTime - metadata.StartTime).TotalSeconds);
+                    var elapsed = ParseElapsedSecondsFromFileName(fi.Name, fallbackElapsed);
+                    result.Add(new SessionImageItem
+                    {
+                        FileName = fi.Name,
+                        RelativePath = Path.Combine("images", fi.Name),
+                        ElapsedSeconds = elapsed,
+                        Reason = "captured",
+                        Timestamp = fi.CreationTime
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SpoolService] 画像ファイル走査警告: {ex.Message}");
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// 指定セッション・ファイル名のスクリーンショットの安全なフルパスを取得します (ディレクトリトラバーサル防止)
+    /// </summary>
+    public string? GetSessionImageFilePath(string sessionId, string fileName)
+    {
+        if (!IsSafePathSegment(sessionId) || !IsSafePathSegment(fileName))
+        {
+            return null;
+        }
+
+        var ext = Path.GetExtension(fileName);
+        if (!ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+            !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
+            !ext.Equals(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var sessionDir = Path.GetFullPath(Path.Combine(_spoolBaseDir, sessionId));
+        var spoolBaseFull = Path.GetFullPath(_spoolBaseDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!sessionDir.StartsWith(spoolBaseFull, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var imagesDir = Path.GetFullPath(Path.Combine(sessionDir, "images"));
+        var imagesDirPrefix = imagesDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var targetFile = Path.GetFullPath(Path.Combine(imagesDir, fileName));
+
+        if (!targetFile.StartsWith(imagesDirPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return File.Exists(targetFile) ? targetFile : null;
+    }
+
+    /// <summary>
     /// セッションのメモを更新・保存します
     /// </summary>
     public bool UpdateSessionMemo(string sessionDirOrId, string? memo)
@@ -414,11 +522,44 @@ public class SpoolService
         }
     }
 
+    /// <summary>
+    /// 指定されたセッションIDのディレクトリが存在するか確認します
+    /// </summary>
+    public bool SessionExists(string sessionId)
+    {
+        if (!IsSafePathSegment(sessionId))
+        {
+            return false;
+        }
+        var dir = Path.Combine(_spoolBaseDir, sessionId);
+        return Directory.Exists(dir);
+    }
+
+    private static bool IsSafePathSegment(string? segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return false;
+        }
+
+        if (segment.Contains("..") || segment.Contains('/') || segment.Contains('\\'))
+        {
+            return false;
+        }
+
+        return Path.GetFileName(segment) == segment;
+    }
+
     private string ResolveSessionDir(string sessionDirOrId)
     {
-        if (Directory.Exists(sessionDirOrId))
+        if (Path.IsPathRooted(sessionDirOrId) && Directory.Exists(sessionDirOrId))
         {
             return Path.GetFullPath(sessionDirOrId);
+        }
+
+        if (!IsSafePathSegment(sessionDirOrId))
+        {
+            return Path.Combine(_spoolBaseDir, "__invalid_session__");
         }
 
         return Path.Combine(_spoolBaseDir, sessionDirOrId);
