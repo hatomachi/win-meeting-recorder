@@ -142,25 +142,33 @@ public class ConfigService
                         modified = true;
                     }
 
-                    if (string.IsNullOrWhiteSpace(config.Box.ClientId) && !string.IsNullOrWhiteSpace(bundled.Box.ClientId))
+                    if (string.IsNullOrWhiteSpace(config.Box.ClientId) && !string.IsNullOrWhiteSpace(bundled.Box?.ClientId))
                     {
                         config.Box.ClientId = bundled.Box.ClientId;
                         modified = true;
                     }
-                    if (string.IsNullOrWhiteSpace(config.Box.ClientSecret) && !string.IsNullOrWhiteSpace(bundled.Box.ClientSecret))
+                    if (string.IsNullOrWhiteSpace(config.Box.ClientSecret) && !string.IsNullOrWhiteSpace(bundled.Box?.ClientSecret))
                     {
                         config.Box.ClientSecret = bundled.Box.ClientSecret;
                         modified = true;
                     }
-                    if (string.IsNullOrWhiteSpace(config.Box.Domain) && !string.IsNullOrWhiteSpace(bundled.Box.Domain))
+                    if (string.IsNullOrWhiteSpace(config.Box.Domain) && !string.IsNullOrWhiteSpace(bundled.Box?.Domain))
                     {
                         config.Box.Domain = bundled.Box.Domain;
                         modified = true;
                     }
                     if ((string.IsNullOrWhiteSpace(config.Box.SharedFolderId) || config.Box.SharedFolderId == "0") &&
-                        !string.IsNullOrWhiteSpace(bundled.Box.SharedFolderId))
+                        !string.IsNullOrWhiteSpace(bundled.Box?.SharedFolderId))
                     {
                         config.Box.SharedFolderId = bundled.Box.SharedFolderId;
+                        modified = true;
+                    }
+
+                    // exeと同階層に明示的な config.json が配置されている場合、AutoOpenBrowser 設定を同期
+                    var exeLocalConfigPath = Path.Combine(GetExeDirectory(), "config.json");
+                    if (File.Exists(exeLocalConfigPath) && config.AutoOpenBrowser != bundled.AutoOpenBrowser)
+                    {
+                        config.AutoOpenBrowser = bundled.AutoOpenBrowser;
                         modified = true;
                     }
 

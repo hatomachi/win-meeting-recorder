@@ -149,6 +149,6 @@ WinMeetingRecorder.exe --test-mp3 input.wav output.mp3
 # 画面変化検知テスト (5秒間, モニタ0)
 WinMeetingRecorder.exe --test-screen 5 0 ./test_out
 
-# ブラウザ自動オープン無効化起動
+# ブラウザ自動オープン無効化起動 (config.json の "AutoOpenBrowser": false でも恒久制御可能)
 WinMeetingRecorder.exe --no-browser
 ```

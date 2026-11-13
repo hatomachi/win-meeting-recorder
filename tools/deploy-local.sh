@@ -17,7 +17,7 @@ scp README_HOW_TO_USE.txt $WIN_HOST:C:/work/
 scp config.default.json $WIN_HOST:C:/work/
 
 echo "🔨 [2/3] Windows 実機上でローカル高速ビルド中 (dotnet publish)..."
-ssh $WIN_HOST "Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; C:\dotnet\dotnet.exe publish C:\work\src\WinMeetingRecorder\WinMeetingRecorder.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o C:\work"
+ssh $WIN_HOST "Stop-Process -Name dotnet -Force -ErrorAction SilentlyContinue; Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 1000; C:\dotnet\dotnet.exe publish C:\work\src\WinMeetingRecorder\WinMeetingRecorder.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o C:\work"
 
 echo "🔄 [3/3] 新バイナリを再起動中..."
 # 未署名exeがDevice Guard / Smart App Controlでブロックされる環境に対応するため、dotnet hostで直接dllを起動

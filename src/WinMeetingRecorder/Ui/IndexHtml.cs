@@ -229,6 +229,27 @@ public static class IndexHtml
           <button id="closeSettingsBtn" class="text-slate-400 hover:text-white text-lg p-1">✕</button>
         </div>
 
+        <!-- アプリケーション動作設定 -->
+        <div class="border border-slate-800 rounded-xl bg-slate-950/50 p-3.5 space-y-2 text-xs">
+          <h3 class="font-semibold text-slate-300 flex items-center space-x-1.5">
+            <span>💻</span>
+            <span>アプリケーション動作設定</span>
+          </h3>
+          <div class="space-y-2 pt-1">
+            <label class="flex items-center space-x-2 cursor-pointer">
+              <input type="checkbox" id="appAutoOpenBrowser" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+              <span class="text-slate-200 text-[11px]">起動時にブラウザ操作盤を自動で開く (AutoOpenBrowser)</span>
+            </label>
+            <p class="text-[10px] text-slate-500 pl-6">※ チェックを外すと、起動時にブラウザを開かずタスクトレイ常駐のみになります。exe同フォルダの config.json でも設定可能です。</p>
+            <div class="flex items-center justify-between pt-1">
+              <div id="appStatusResult" class="text-[10px] min-h-[1rem] break-all text-slate-400"></div>
+              <button id="saveAppConfigBtn" class="py-1 px-3 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition text-xs">
+                💾 動作設定保存
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Box 連携設定 -->
         <div class="border border-slate-800 rounded-xl bg-slate-950/50 p-3.5 space-y-2.5 text-xs">
           <h3 class="font-semibold text-slate-300 flex items-center space-x-1.5">
@@ -375,6 +396,12 @@ public static class IndexHtml
     const openSettingsBtn = document.getElementById('openSettingsBtn');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
     const settingsModal = document.getElementById('settingsModal');
+
+    // アプリケーション動作設定 UI
+    const appAutoOpenBrowser = document.getElementById('appAutoOpenBrowser');
+    const saveAppConfigBtn = document.getElementById('saveAppConfigBtn');
+    const appStatusResult = document.getElementById('appStatusResult');
+
     const boxClientId = document.getElementById('boxClientId');
     const boxClientSecret = document.getElementById('boxClientSecret');
     const boxSharedFolderId = document.getElementById('boxSharedFolderId');
@@ -651,6 +678,33 @@ public static class IndexHtml
       }
     });
 
+    saveAppConfigBtn.addEventListener('click', async () => {
+      try {
+        saveAppConfigBtn.disabled = true;
+        saveAppConfigBtn.textContent = '保存中...';
+        const res = await fetch('/api/config/app', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ autoOpenBrowser: appAutoOpenBrowser.checked })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          appStatusResult.textContent = '✅ 動作設定を保存しました。次回起動時から反映されます。';
+          appStatusResult.className = 'text-[10px] text-emerald-400 mt-1';
+        } else {
+          appStatusResult.textContent = '❌ 保存エラー: ' + (data.message || res.statusText);
+          appStatusResult.className = 'text-[10px] text-rose-400 mt-1';
+        }
+        await loadConfig();
+      } catch (err) {
+        appStatusResult.textContent = '❌ 保存エラー: ' + err.message;
+        appStatusResult.className = 'text-[10px] text-rose-400 mt-1';
+      } finally {
+        saveAppConfigBtn.disabled = false;
+        saveAppConfigBtn.textContent = '💾 動作設定保存';
+      }
+    });
+
     saveBoxConfigBtn.addEventListener('click', async () => {
       try {
         saveBoxConfigBtn.disabled = true;
@@ -727,6 +781,9 @@ public static class IndexHtml
       try {
         const res = await fetch('/api/config');
         const cfg = await res.json();
+        if (cfg.autoOpenBrowser !== undefined) {
+          appAutoOpenBrowser.checked = cfg.autoOpenBrowser !== false;
+        }
         if (cfg.box) {
           boxClientId.value = cfg.box.clientId || '';
           boxClientSecret.value = cfg.box.clientSecret || '';
