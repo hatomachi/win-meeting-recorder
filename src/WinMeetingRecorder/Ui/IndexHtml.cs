@@ -93,7 +93,7 @@ public static class IndexHtml
         
         <div class="flex items-center space-x-2 flex-wrap gap-y-1">
           <!-- マイク ピル (音量メーター付き) -->
-          <div class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
+          <div id="micPill" class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
             <span class="text-xs mr-1.5">🎤</span>
             <!-- リアルタイム音量ミニインジケーター (4本バー) -->
             <div class="flex items-end space-x-0.5 h-3 mr-1.5" title="マイク入力レベル">
@@ -108,9 +108,16 @@ public static class IndexHtml
             <span class="absolute right-1.5 text-[9px] text-slate-500 pointer-events-none">▾</span>
           </div>
 
-          <!-- スピーカー ピル -->
-          <div class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
-            <span class="text-xs mr-1">🔊</span>
+          <!-- スピーカー ピル (音量メーター付き) -->
+          <div id="speakerPill" class="relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group">
+            <span class="text-xs mr-1.5">🔊</span>
+            <!-- リアルタイム音量ミニインジケーター (4本バー) -->
+            <div class="flex items-end space-x-0.5 h-3 mr-1.5" title="スピーカー(Loopback)入力レベル">
+              <span id="sBar1" class="w-0.5 h-1 bg-slate-700 rounded-full transition-all duration-75"></span>
+              <span id="sBar2" class="w-0.5 h-2 bg-slate-700 rounded-full transition-all duration-75"></span>
+              <span id="sBar3" class="w-0.5 h-2.5 bg-slate-700 rounded-full transition-all duration-75"></span>
+              <span id="sBar4" class="w-0.5 h-3 bg-slate-700 rounded-full transition-all duration-75"></span>
+            </div>
             <select id="playbackSelect" class="bg-transparent text-[11px] text-slate-300 font-medium focus:outline-none cursor-pointer pr-4 appearance-none">
               <option value="">既定の再生デバイス</option>
             </select>
@@ -139,6 +146,12 @@ public static class IndexHtml
         </button>
       </div>
 
+      <!-- 行4: 無音検知・画面ロック等の警告表示 (警告発生時のみ表示) -->
+      <div id="healthWarningBanner" class="hidden bg-amber-950/60 border border-amber-500/40 rounded-lg px-3 py-1.5 text-[11px] text-amber-300 flex items-center space-x-2">
+        <span class="shrink-0">⚠️</span>
+        <span id="healthWarningText" class="leading-snug"></span>
+      </div>
+
       <!-- 隠し互換用 (既存スクリプト・ヘルスモニター用) -->
       <div class="hidden">
         <div id="audioLevelBar"></div>
@@ -147,8 +160,6 @@ public static class IndexHtml
         <div id="healthGuardBar"></div>
         <div id="healthStatusLabel"></div>
         <div id="healthDeviceSummary"></div>
-        <div id="healthWarningBanner"></div>
-        <div id="healthWarningText"></div>
       </div>
     </div>
 
@@ -472,11 +483,19 @@ public static class IndexHtml
     const galleryMetaFileName = document.getElementById('galleryMetaFileName');
     const galleryThumbStrip = document.getElementById('galleryThumbStrip');
 
-    // Zoom風 音量インジケーター (4本バー)
+    // Zoom風 音量インジケーター (4本バー: マイク & スピーカー)
+    const micPill = document.getElementById('micPill');
+    const speakerPill = document.getElementById('speakerPill');
     const vBar1 = document.getElementById('vBar1');
     const vBar2 = document.getElementById('vBar2');
     const vBar3 = document.getElementById('vBar3');
     const vBar4 = document.getElementById('vBar4');
+    const sBar1 = document.getElementById('sBar1');
+    const sBar2 = document.getElementById('sBar2');
+    const sBar3 = document.getElementById('sBar3');
+    const sBar4 = document.getElementById('sBar4');
+    const healthWarningBanner = document.getElementById('healthWarningBanner');
+    const healthWarningText = document.getElementById('healthWarningText');
 
     // Box UI & テーマ
     const boxAuthBadge = document.getElementById('boxAuthBadge');
@@ -1028,6 +1047,8 @@ public static class IndexHtml
         screenshotBtn.disabled = true;
         screenshotBtn.classList.add('hidden');
         resetShotPreviewPill();
+        updateVolumeBars(0, 0);
+        updateHealthWarningUI(false, null);
         if (isGalleryOpen) {
           galleryCaptureNowBtn.classList.add('hidden');
         }
@@ -1121,21 +1142,93 @@ public static class IndexHtml
       }
     }
 
-    // Zoom風 音量インジケーター更新 (4本バー)
-    function updateVolumeBars(levelPct) {
-      // levelPct: 0〜100
-      vBar1.className = levelPct > 4 
+    // 録音中のスピーカー・マイク無停止ホットスワップ切替
+    playbackSelect.addEventListener('change', async () => {
+      if (!isRecording) return;
+      try {
+        await fetch('/api/record/devices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playbackDeviceId: playbackSelect.value || null,
+            switchPlayback: true,
+            switchCapture: false
+          })
+        });
+        setTimeout(pollStatusOnce, 150);
+        setTimeout(loadLogs, 300);
+      } catch (err) {
+        console.error('スピーカー切替エラー:', err);
+      }
+    });
+
+    captureSelect.addEventListener('change', async () => {
+      if (!isRecording) return;
+      try {
+        await fetch('/api/record/devices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            captureDeviceId: captureSelect.value || null,
+            switchPlayback: false,
+            switchCapture: true
+          })
+        });
+        setTimeout(pollStatusOnce, 150);
+        setTimeout(loadLogs, 300);
+      } catch (err) {
+        console.error('マイク切替エラー:', err);
+      }
+    });
+
+    // Zoom風 音量インジケーター更新 (4本バー: マイク & スピーカー独立)
+    function updateSingleBarSet(b1, b2, b3, b4, levelPct) {
+      if (!b1 || !b2 || !b3 || !b4) return;
+      b1.className = levelPct > 4 
         ? 'w-0.5 h-1 bg-emerald-400 rounded-full transition-all duration-75' 
         : 'w-0.5 h-1 bg-slate-700 rounded-full transition-all duration-75';
-      vBar2.className = levelPct > 20 
+      b2.className = levelPct > 20 
         ? 'w-0.5 h-2 bg-emerald-400 rounded-full transition-all duration-75' 
         : 'w-0.5 h-2 bg-slate-700 rounded-full transition-all duration-75';
-      vBar3.className = levelPct > 45 
+      b3.className = levelPct > 45 
         ? 'w-0.5 h-2.5 bg-emerald-400 rounded-full transition-all duration-75' 
         : 'w-0.5 h-2.5 bg-slate-700 rounded-full transition-all duration-75';
-      vBar4.className = levelPct > 70 
+      b4.className = levelPct > 70 
         ? 'w-0.5 h-3 bg-amber-400 rounded-full transition-all duration-75' 
         : 'w-0.5 h-3 bg-slate-700 rounded-full transition-all duration-75';
+    }
+
+    function updateVolumeBars(micPct, speakerPct = 0) {
+      updateSingleBarSet(vBar1, vBar2, vBar3, vBar4, micPct);
+      updateSingleBarSet(sBar1, sBar2, sBar3, sBar4, speakerPct);
+    }
+
+    // 無音検知・システム警告バナーおよびピル枠線の更新
+    function updateHealthWarningUI(isRec, health) {
+      const normalPillCls = 'relative inline-flex items-center bg-slate-950/80 hover:bg-slate-800/80 border border-slate-700/70 rounded-lg px-2 py-1 transition group';
+      const warnPillCls = 'relative inline-flex items-center bg-amber-950/40 hover:bg-amber-900/40 border border-amber-500/70 rounded-lg px-2 py-1 transition group';
+
+      if (!isRec || !health) {
+        healthWarningBanner?.classList.add('hidden');
+        if (healthWarningText) healthWarningText.textContent = '';
+        if (micPill) micPill.className = normalPillCls;
+        if (speakerPill) speakerPill.className = normalPillCls;
+        return;
+      }
+
+      const warnMsg = health.warningMessage || health.audioNoticeMessage;
+      if (warnMsg) {
+        healthWarningBanner?.classList.remove('hidden');
+        if (healthWarningText) healthWarningText.textContent = warnMsg;
+      } else {
+        healthWarningBanner?.classList.add('hidden');
+        if (healthWarningText) healthWarningText.textContent = '';
+      }
+
+      const micSilent = (health.micSilenceSeconds || 0) >= 10;
+      const speakerSilent = (health.loopbackSilenceSeconds || 0) >= 10;
+      if (micPill) micPill.className = micSilent ? warnPillCls : normalPillCls;
+      if (speakerPill) speakerPill.className = speakerSilent ? warnPillCls : normalPillCls;
     }
 
     // ステータスポーリング
@@ -1203,10 +1296,13 @@ public static class IndexHtml
             }
           }
 
-          const level = Math.round((data.audioLevel || 0) * 100);
-          updateVolumeBars(level);
+          const micLevelPct = Math.round(((data.micLevel !== undefined ? data.micLevel : data.audioLevel) || 0) * 100);
+          const speakerLevelPct = Math.round((data.loopbackLevel || 0) * 100);
+          updateVolumeBars(micLevelPct, speakerLevelPct);
+          updateHealthWarningUI(true, data.health);
         } else {
-          updateVolumeBars(0);
+          updateVolumeBars(0, 0);
+          updateHealthWarningUI(false, null);
         }
 
         // アップロード中プログレス更新 (トレイ停止等の同期用)

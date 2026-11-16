@@ -51,7 +51,12 @@ public record RecordingHealthStatus(
     string ScreenState,
     string ActivePlaybackDevice,
     string ActiveMicDevice,
-    string? WarningMessage);
+    string? WarningMessage,
+    int LoopbackSilenceSeconds = 0,
+    int MicSilenceSeconds = 0,
+    bool HasDetectedLoopbackAudio = false,
+    bool HasDetectedMicAudio = false,
+    string? AudioNoticeMessage = null);
 
 public record CurrentPipelineProgress(
     string Phase, // "idle", "recording", "converting", "uploading", "verifying", "completed", "error"
@@ -77,8 +82,9 @@ public class RecordingWorkflowService
     private string? _currentMemo;
     private SessionImageItem? _latestCapturedImage;
 
+    private const int DeviceSilenceNoticeThresholdSec = 10;
+
     private CancellationTokenSource? _watchdogCts;
-    private bool _silenceWarningNotified;
     private CurrentPipelineProgress _currentProgress = new("idle", "待機中", 0);
 
     public CurrentPipelineProgress CurrentProgress
@@ -272,6 +278,11 @@ public class RecordingWorkflowService
             HealthNotice?.Invoke(msg);
         };
 
+        _audioEngine.OnAudioWarning += msg =>
+        {
+            HealthWarning?.Invoke(msg);
+        };
+
         _screenEngine.OnScreenStatusMessage += msg =>
         {
             HealthNotice?.Invoke(msg);
@@ -301,6 +312,33 @@ public class RecordingWorkflowService
         int silenceSec = _audioEngine.LastNonSilentUtc > DateTime.MinValue
             ? Math.Max(0, (int)(nowUtc - _audioEngine.LastNonSilentUtc).TotalSeconds)
             : 0;
+        int loopbackSilenceSec = _audioEngine.LastLoopbackNonSilentUtc > DateTime.MinValue
+            ? Math.Max(0, (int)(nowUtc - _audioEngine.LastLoopbackNonSilentUtc).TotalSeconds)
+            : 0;
+        int micSilenceSec = _audioEngine.LastMicNonSilentUtc > DateTime.MinValue
+            ? Math.Max(0, (int)(nowUtc - _audioEngine.LastMicNonSilentUtc).TotalSeconds)
+            : 0;
+
+        bool loopbackSilent = loopbackSilenceSec >= DeviceSilenceNoticeThresholdSec;
+        bool micSilent = micSilenceSec >= DeviceSilenceNoticeThresholdSec;
+
+        string? audioNoticeMsg = null;
+        if (loopbackSilent && micSilent)
+        {
+            audioNoticeMsg = $"スピーカーとマイクの両方で音を拾っていません（スピーカー {loopbackSilenceSec}秒 / マイク {micSilenceSec}秒 無音）— 再生デバイス・マイク設定を確認してください";
+        }
+        else if (loopbackSilent)
+        {
+            audioNoticeMsg = !_audioEngine.HasDetectedLoopbackAudio
+                ? $"スピーカーで音を拾っていません（{loopbackSilenceSec}秒間無音）— 再生デバイスの切り替え忘れを確認してください"
+                : $"スピーカーで音を拾っていません（{loopbackSilenceSec}秒間無音）— 相手の無音または再生デバイス設定を確認してください";
+        }
+        else if (micSilent)
+        {
+            audioNoticeMsg = !_audioEngine.HasDetectedMicAudio
+                ? $"マイクで音を拾っていません（{micSilenceSec}秒間無音）— マイクの選択やミュートを確認してください"
+                : $"マイクで音を拾っていません（{micSilenceSec}秒間無音）— 発話中であればミュートやマイク設定を確認してください";
+        }
 
         string? warningMsg = null;
         string overall = "healthy";
@@ -309,11 +347,6 @@ public class RecordingWorkflowService
         {
             overall = "warning";
             warningMsg = _screenEngine.LastWarningMessage ?? "画面ロック中 (解除後に自動再開します)";
-        }
-        else if (silenceSec >= 180)
-        {
-            overall = "warning";
-            warningMsg = $"約{silenceSec / 60}分間、音声入力が検出されていません (ミュート確認)";
         }
         else if (!string.IsNullOrEmpty(_audioEngine.LastWarningMessage))
         {
@@ -330,7 +363,47 @@ public class RecordingWorkflowService
             _screenEngine.HealthStatus,
             _audioEngine.ActivePlaybackDeviceName,
             _audioEngine.ActiveMicDeviceName,
-            warningMsg);
+            warningMsg,
+            loopbackSilenceSec,
+            micSilenceSec,
+            _audioEngine.HasDetectedLoopbackAudio,
+            _audioEngine.HasDetectedMicAudio,
+            audioNoticeMsg);
+    }
+
+    /// <summary>
+    /// 録音中にスピーカーまたはマイクのデバイスを無停止で切り替える
+    /// </summary>
+    public (bool Success, string Message) SwitchAudioDevices(
+        string? playbackDeviceId,
+        string? captureDeviceId,
+        bool switchPlayback,
+        bool switchCapture)
+    {
+        lock (_lock)
+        {
+            if (!_audioEngine.IsRecording)
+            {
+                return (false, "記録中ではありません。");
+            }
+
+            _audioEngine.SwitchDevices(playbackDeviceId, captureDeviceId, switchPlayback, switchCapture);
+
+            if (switchPlayback && switchCapture)
+            {
+                AppLogger.Info($"🔄 録音中の音声デバイスを切り替えました (🔊 {_audioEngine.ActivePlaybackDeviceName} / 🎤 {_audioEngine.ActiveMicDeviceName})");
+            }
+            else if (switchPlayback)
+            {
+                AppLogger.Info($"🔄 録音中の再生デバイス(スピーカー)を切り替えました: 🔊 {_audioEngine.ActivePlaybackDeviceName}");
+            }
+            else if (switchCapture)
+            {
+                AppLogger.Info($"🔄 録音中のマイクデバイスを切り替えました: 🎤 {_audioEngine.ActiveMicDeviceName}");
+            }
+
+            return (true, "音声デバイスを切り替えました。");
+        }
     }
 
     /// <summary>
@@ -358,7 +431,6 @@ public class RecordingWorkflowService
             _activeSession = new ActiveSessionState(session.SessionId, session.SpoolDirectory);
             _latestCapturedImage = null;
             _recordStartTime = DateTime.Now;
-            _silenceWarningNotified = false;
 
             var outputPath = Path.Combine(session.SpoolDirectory, "meeting_audio.wav");
 
@@ -466,24 +538,6 @@ public class RecordingWorkflowService
                         {
                             Console.WriteLine($"[Watchdog] ⚠️ 音声書き込みの遅延({stalledSec:F1}秒)を検知しました。デバイス再接続を要求します。");
                             _audioEngine.RequestDeviceRefresh();
-                        }
-                    }
-
-                    // 3. 長時間完全無音 (3分 = 180秒以上) の検知と通知
-                    if (_audioEngine.IsRecording && _audioEngine.LastNonSilentUtc > DateTime.MinValue)
-                    {
-                        double silenceSec = (nowUtc - _audioEngine.LastNonSilentUtc).TotalSeconds;
-                        if (silenceSec >= 180.0 && !_silenceWarningNotified)
-                        {
-                            _silenceWarningNotified = true;
-                            string warn = "3分間、音声が検出されていません。マイクのミュートやデバイス設定を確認してください。";
-                            Console.WriteLine($"[Watchdog] ⚠️ {warn}");
-                            HealthWarning?.Invoke(warn);
-                        }
-                        else if (silenceSec < 5.0 && _silenceWarningNotified)
-                        {
-                            // 再び音声が入ったら警告フラグをクリア
-                            _silenceWarningNotified = false;
                         }
                     }
                 }

@@ -1029,6 +1029,8 @@ public static class Program
                 latestImage = latestImageDto,
                 targetScreen = screenEngine.TargetScreen,
                 audioLevel = audioEngine.CurrentAudioLevel,
+                loopbackLevel = audioEngine.CurrentLoopbackLevel,
+                micLevel = audioEngine.CurrentMicLevel,
                 health = workflow.GetHealthStatus(),
                 pipeline = workflow.CurrentProgress
             });
@@ -1124,6 +1126,27 @@ public static class Program
             return Results.Ok(new
             {
                 message = "オーディオデバイスの再接続を要求しました。"
+            });
+        });
+
+        // API: 録音中のスピーカー・マイク無停止ホットスワップ切り替え
+        app.MapPost("/api/record/devices", (RecordingWorkflowService workflow, RecordDeviceSwitchRequest req) =>
+        {
+            var res = workflow.SwitchAudioDevices(
+                req.PlaybackDeviceId,
+                req.CaptureDeviceId,
+                req.SwitchPlayback,
+                req.SwitchCapture);
+
+            if (!res.Success)
+            {
+                return Results.BadRequest(new { error = res.Message });
+            }
+
+            return Results.Ok(new
+            {
+                message = res.Message,
+                health = workflow.GetHealthStatus()
             });
         });
 
@@ -1363,6 +1386,12 @@ public record RecordStopRequest(
     bool? AutoUpload = null, 
     string? ThemeId = null,
     string? Memo = null);
+
+public record RecordDeviceSwitchRequest(
+    string? PlaybackDeviceId = null,
+    string? CaptureDeviceId = null,
+    bool SwitchPlayback = false,
+    bool SwitchCapture = false);
 
 public record SessionMemoRequest(string? Memo);
 

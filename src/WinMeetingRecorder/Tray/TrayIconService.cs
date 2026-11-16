@@ -369,7 +369,7 @@ public class TrayIconService : IDisposable
             var health = _workflow.GetHealthStatus();
             if (health.OverallStatus == "warning")
             {
-                _headerItem.Text = $"⚠️ 録音中・注意 ({timeStr}) [無音/ロック確認]";
+                _headerItem.Text = $"⚠️ 録音中・注意 ({timeStr}) [ロック/状態確認]";
             }
             else
             {
@@ -508,7 +508,7 @@ public class TrayIconService : IDisposable
         string timeStr = $"{(int)elapsed.TotalMinutes:D2}:{elapsed.Seconds:D2}";
         int levelPct = (int)(audioLevel * 100);
         string tooltip = hasWarning
-            ? $"WinMeetingRecorder [⚠️注意(無音/ロック) {timeStr}]"
+            ? $"WinMeetingRecorder [⚠️注意(ロック/状態確認) {timeStr}]"
             : $"WinMeetingRecorder [録音中: {timeStr} | 音声: {levelPct}%]";
         if (tooltip.Length > 63) tooltip = tooltip.Substring(0, 63);
 

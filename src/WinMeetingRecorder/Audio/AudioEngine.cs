@@ -9,6 +9,9 @@ public class AudioEngine : IDisposable
 {
     private const int TargetSampleRate = 48000;
     private const int TargetChannels = 2;
+    private const float LoopbackSilencePeakThreshold = 0.008f;
+    private const float MicSilencePeakThreshold = 0.025f;
+    private const double DeviceWarmupIgnoreSeconds = 2.5;
 
     private readonly object _mixerLock = new();
 
@@ -40,6 +43,10 @@ public class AudioEngine : IDisposable
     private DateTime _lastLoopbackReconnectAttempt = DateTime.MinValue;
     private DateTime _lastMicReconnectAttempt = DateTime.MinValue;
     private DateTime _lastFlushTime = DateTime.MinValue;
+    private DateTime _loopbackMonitorStartUtc = DateTime.MinValue;
+    private DateTime _micMonitorStartUtc = DateTime.MinValue;
+    private int _loopbackActiveStreak;
+    private int _micActiveStreak;
 
     public bool IsRecording { get; private set; }
     public string? CurrentOutputFile { get; private set; }
@@ -49,12 +56,26 @@ public class AudioEngine : IDisposable
     /// </summary>
     public float CurrentAudioLevel { get; private set; }
 
+    /// <summary>
+    /// 現在のスピーカー (WASAPI Loopback) 単体音量レベル (0.0f ~ 1.0f)
+    /// </summary>
+    public float CurrentLoopbackLevel { get; private set; }
+
+    /// <summary>
+    /// 現在のマイク (WASAPI Capture) 単体音量レベル (0.0f ~ 1.0f)
+    /// </summary>
+    public float CurrentMicLevel { get; private set; }
+
     public float LoopbackVolume { get; set; } = 0.85f;
     public float MicVolume { get; set; } = 0.85f;
 
     // 健全性・監視用テレメトリ
     public DateTime LastAudioWriteUtc { get; private set; } = DateTime.MinValue;
     public DateTime LastNonSilentUtc { get; private set; } = DateTime.MinValue;
+    public DateTime LastLoopbackNonSilentUtc { get; private set; } = DateTime.MinValue;
+    public DateTime LastMicNonSilentUtc { get; private set; } = DateTime.MinValue;
+    public bool HasDetectedLoopbackAudio { get; private set; }
+    public bool HasDetectedMicAudio { get; private set; }
     public int ReconnectCount { get; private set; }
     public string ActivePlaybackDeviceName { get; private set; } = "";
     public string ActiveMicDeviceName { get; private set; } = "";
@@ -117,6 +138,17 @@ public class AudioEngine : IDisposable
         var nowUtc = DateTime.UtcNow;
         LastAudioWriteUtc = nowUtc;
         LastNonSilentUtc = nowUtc;
+        LastLoopbackNonSilentUtc = nowUtc;
+        LastMicNonSilentUtc = nowUtc;
+        _loopbackMonitorStartUtc = nowUtc;
+        _micMonitorStartUtc = nowUtc;
+        _loopbackActiveStreak = 0;
+        _micActiveStreak = 0;
+        HasDetectedLoopbackAudio = false;
+        HasDetectedMicAudio = false;
+        CurrentAudioLevel = 0f;
+        CurrentLoopbackLevel = 0f;
+        CurrentMicLevel = 0f;
         _lastFlushTime = nowUtc;
         ReconnectCount = 0;
         LastWarningMessage = null;
@@ -309,6 +341,7 @@ public class AudioEngine : IDisposable
 
         newCapture.RecordingStopped += (s, a) =>
         {
+            if (!ReferenceEquals(s, _loopbackCapture)) return;
             if (IsRecording && !(_recordingCts?.IsCancellationRequested ?? true))
             {
                 Console.WriteLine($"[AudioEngine] ⚠️ スピーカーデバイス停止検知 ({ActivePlaybackDeviceName}): {a.Exception?.Message ?? "デバイス変更/切断"}");
@@ -316,7 +349,8 @@ public class AudioEngine : IDisposable
             }
         };
 
-        var newSampleProvider = ConvertToTargetSampleProvider(newBuffer, TargetSampleRate, TargetChannels, LoopbackVolume);
+        var convertedProvider = ConvertToTargetSampleProvider(newBuffer, TargetSampleRate, TargetChannels, LoopbackVolume);
+        var newSampleProvider = new PeakMeteringSampleProvider(convertedProvider, UpdateLoopbackPeak);
 
         lock (_mixerLock)
         {
@@ -374,6 +408,17 @@ public class AudioEngine : IDisposable
 
         if (micDevice == null)
         {
+            lock (_mixerLock)
+            {
+                if (_mixer != null && _micSampleProvider != null)
+                {
+                    _mixer.RemoveMixerInput(_micSampleProvider);
+                }
+                _micSampleProvider = null;
+                _micBuffer = null;
+                _micCapture = null;
+            }
+            CurrentMicLevel = 0f;
             ActiveMicDeviceName = "(マイク未接続)";
             return;
         }
@@ -398,6 +443,7 @@ public class AudioEngine : IDisposable
 
         newCapture.RecordingStopped += (s, a) =>
         {
+            if (!ReferenceEquals(s, _micCapture)) return;
             if (IsRecording && !(_recordingCts?.IsCancellationRequested ?? true))
             {
                 Console.WriteLine($"[AudioEngine] ⚠️ マイクデバイス停止検知 ({ActiveMicDeviceName}): {a.Exception?.Message ?? "デバイス変更/切断"}");
@@ -405,7 +451,8 @@ public class AudioEngine : IDisposable
             }
         };
 
-        var newSampleProvider = ConvertToTargetSampleProvider(newBuffer, TargetSampleRate, TargetChannels, MicVolume);
+        var convertedProvider = ConvertToTargetSampleProvider(newBuffer, TargetSampleRate, TargetChannels, MicVolume);
+        var newSampleProvider = new PeakMeteringSampleProvider(convertedProvider, UpdateMicPeak);
 
         lock (_mixerLock)
         {
@@ -506,6 +553,122 @@ public class AudioEngine : IDisposable
     }
 
     /// <summary>
+    /// 録音中にスピーカーまたはマイクのデバイスを無停止でホットスワップ切り替える
+    /// </summary>
+    public void SwitchDevices(string? playbackDeviceId, string? captureDeviceId, bool switchPlayback, bool switchCapture)
+    {
+        if (!IsRecording) return;
+
+        var nowUtc = DateTime.UtcNow;
+
+        if (switchPlayback)
+        {
+            _requestedPlaybackDeviceId = string.IsNullOrWhiteSpace(playbackDeviceId) ? null : playbackDeviceId;
+            _needsLoopbackReconnect = false;
+            _lastLoopbackReconnectAttempt = nowUtc;
+
+            var oldLoopback = _loopbackCapture;
+            _loopbackCapture = null;
+            try { oldLoopback?.StopRecording(); } catch { /* ignore */ }
+            try { oldLoopback?.Dispose(); } catch { /* ignore */ }
+
+            CurrentLoopbackLevel = 0f;
+            LastLoopbackNonSilentUtc = nowUtc;
+            _loopbackMonitorStartUtc = nowUtc;
+            _loopbackActiveStreak = 0;
+            HasDetectedLoopbackAudio = false;
+
+            try
+            {
+                InitializeLoopbackCapture(_requestedPlaybackDeviceId, isReconnect: true);
+                ReconnectCount++;
+            }
+            catch (Exception ex)
+            {
+                _needsLoopbackReconnect = true;
+                Console.WriteLine($"[AudioEngine] スピーカー手動切替エラー (自動再接続待機): {ex.Message}");
+            }
+        }
+
+        if (switchCapture)
+        {
+            _requestedCaptureDeviceId = string.IsNullOrWhiteSpace(captureDeviceId) ? null : captureDeviceId;
+            _needsMicReconnect = false;
+            _lastMicReconnectAttempt = nowUtc;
+
+            var oldMic = _micCapture;
+            _micCapture = null;
+            try { oldMic?.StopRecording(); } catch { /* ignore */ }
+            try { oldMic?.Dispose(); } catch { /* ignore */ }
+
+            CurrentMicLevel = 0f;
+            LastMicNonSilentUtc = nowUtc;
+            _micMonitorStartUtc = nowUtc;
+            _micActiveStreak = 0;
+            HasDetectedMicAudio = false;
+
+            try
+            {
+                InitializeMicCapture(_requestedCaptureDeviceId, isReconnect: true);
+                ReconnectCount++;
+            }
+            catch (Exception ex)
+            {
+                _needsMicReconnect = true;
+                Console.WriteLine($"[AudioEngine] マイク手動切替エラー (自動再接続待機): {ex.Message}");
+            }
+        }
+    }
+
+    private void UpdateLoopbackPeak(float maxPeak)
+    {
+        CurrentLoopbackLevel = Math.Max(maxPeak, CurrentLoopbackLevel * 0.85f);
+        var nowUtc = DateTime.UtcNow;
+        if ((nowUtc - _loopbackMonitorStartUtc).TotalSeconds < DeviceWarmupIgnoreSeconds)
+        {
+            return;
+        }
+
+        if (maxPeak > LoopbackSilencePeakThreshold)
+        {
+            _loopbackActiveStreak++;
+            if (_loopbackActiveStreak >= 2)
+            {
+                LastLoopbackNonSilentUtc = nowUtc;
+                HasDetectedLoopbackAudio = true;
+            }
+        }
+        else
+        {
+            _loopbackActiveStreak = 0;
+        }
+    }
+
+    private void UpdateMicPeak(float maxPeak)
+    {
+        CurrentMicLevel = Math.Max(maxPeak, CurrentMicLevel * 0.85f);
+        var nowUtc = DateTime.UtcNow;
+        if ((nowUtc - _micMonitorStartUtc).TotalSeconds < DeviceWarmupIgnoreSeconds)
+        {
+            return;
+        }
+
+        if (maxPeak > MicSilencePeakThreshold)
+        {
+            _micActiveStreak++;
+            if (_micActiveStreak >= 2)
+            {
+                LastMicNonSilentUtc = nowUtc;
+                HasDetectedMicAudio = true;
+            }
+        }
+        else
+        {
+            _micActiveStreak = 0;
+        }
+    }
+
+    /// <summary>
     /// 任意のバッファプロバイダを、目標サンプリングレート・2ch・指定音量のISampleProviderに変換する
     /// </summary>
     private static ISampleProvider ConvertToTargetSampleProvider(
@@ -546,6 +709,8 @@ public class AudioEngine : IDisposable
 
         IsRecording = false;
         CurrentAudioLevel = 0f;
+        CurrentLoopbackLevel = 0f;
+        CurrentMicLevel = 0f;
 
         try
         {
@@ -618,5 +783,39 @@ public class AudioEngine : IDisposable
         try { _loopbackCapture?.Dispose(); } catch { /* ignore */ }
         try { _micCapture?.Dispose(); } catch { /* ignore */ }
         _recordingCts?.Dispose();
+    }
+
+    /// <summary>
+    /// ミキサー入力前段でサンプルを改変せずにピーク音量だけを計測する軽量プロバイダ
+    /// </summary>
+    private sealed class PeakMeteringSampleProvider : ISampleProvider
+    {
+        private readonly ISampleProvider _source;
+        private readonly Action<float> _onPeakMeasured;
+
+        public PeakMeteringSampleProvider(ISampleProvider source, Action<float> onPeakMeasured)
+        {
+            _source = source;
+            _onPeakMeasured = onPeakMeasured;
+        }
+
+        public WaveFormat WaveFormat => _source.WaveFormat;
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            int read = _source.Read(buffer, offset, count);
+            if (read > 0)
+            {
+                float maxPeak = 0f;
+                int end = offset + read;
+                for (int i = offset; i < end; i++)
+                {
+                    float abs = Math.Abs(buffer[i]);
+                    if (abs > maxPeak) maxPeak = abs;
+                }
+                _onPeakMeasured(maxPeak);
+            }
+            return read;
+        }
     }
 }

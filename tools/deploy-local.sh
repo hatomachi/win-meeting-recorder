@@ -24,4 +24,4 @@ echo "🔄 [3/3] 新バイナリを再起動中..."
 ssh $WIN_HOST "Stop-Process -Name dotnet -Force -ErrorAction SilentlyContinue; Stop-Process -Name WinMeetingRecorder -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; schtasks /create /tn 'StartRecorder' /tr 'C:\dotnet\dotnet.exe C:\work\src\WinMeetingRecorder\bin\Release\net8.0-windows\win-x64\WinMeetingRecorder.dll --no-browser' /sc once /st '23:59' /ru 'sohik' /it /f; schtasks /run /tn 'StartRecorder'; Start-Sleep -Seconds 2; schtasks /delete /tn 'StartRecorder' /f"
 
 echo "✅ デプロイ完了！"
-echo "Web UI URL: http://192.168.11.17:5000"
+echo "Web UI URL: http://192.168.11.12:5000"
